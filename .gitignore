@@ -1,0 +1,18 @@
+# Node
+node_modules/
+npm-debug.log
+
+# Python
+__pycache__/
+.venv/
+venv/
+*.pyc
+
+# Ortam Değişkenleri
+.env
+.env.local
+
+# Build dosyaları
+.next/
+out/
+build/
