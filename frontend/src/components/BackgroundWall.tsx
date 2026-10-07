@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 import { formatPosterUrl } from "@/services/api";
 
 // ─── Poster catalogue with metadata for click-to-search ──────────────────────
@@ -9,6 +10,7 @@ interface PosterEntry {
   url: string;
   title: string;
   query: string; // exact query forwarded to the recommendation engine
+  id: string; // TMDB ID for direct navigation
 }
 
 const POSTER_COLLECTION: PosterEntry[] = [
@@ -16,61 +18,73 @@ const POSTER_COLLECTION: PosterEntry[] = [
     url: "https://image.tmdb.org/t/p/w500/f89U3ADr1oiB1s9GkdPOEpXUk5H.jpg",
     title: "The Matrix",
     query: "Matrix gibi distopik siber-punk bilim kurgu",
+    id: "603",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/qJ2tW6WMUDux911r6m7haRef0WH.jpg",
     title: "The Dark Knight",
     query: "The Dark Knight gibi karanlık kahraman filmi",
+    id: "155",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg",
     title: "Interstellar",
     query: "Interstellar gibi uzay ve zaman bükücü bilim kurgu",
+    id: "157336",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg",
     title: "Inception",
     query: "Inception gibi zihin bükücü rüya gerilimi",
+    id: "27205",
   },
   {
     url: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx19-gtMC64182sm4.jpg",
     title: "Monster",
     query: "Monster gibi derin psikolojik suç gerilimi anime",
+    id: "3374",
   },
   {
     url: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-C6FPmWm59CyP.jpg",
     title: "Attack on Titan",
     query: "Attack on Titan gibi epik fantezi aksiyon anime",
+    id: "1429",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/bptfVGEQuv6vDTIMVCHjJ9Dz8PX.jpg",
     title: "Fight Club",
     query: "Fight Club gibi kimlik buhranı ve çarpıcı twist içeren film",
+    id: "550",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/ggFHVNu6YYI5L9pCfOacjizRGt.jpg",
     title: "Breaking Bad",
     query: "Breaking Bad gibi ahlaki çöküş hikayesi dizi",
+    id: "1396",
   },
   {
     url: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx9253-tIUXF2gfU8Sg.jpg",
     title: "Steins;Gate",
     query: "Steins;Gate gibi zaman yolculuğu ve bilimsel gerilim anime",
+    id: "34398",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/d5NXSklXo0qyIYkgV94XAgMIckC.jpg",
     title: "Dune",
     query: "Dune gibi epik evren kurgusu olan bilim kurgu",
+    id: "438148",
   },
   {
     url: "https://image.tmdb.org/t/p/w500/fqldf2t8ztc9aiwn3k6mlX3tvRT.jpg",
     title: "Arcane",
     query: "Arcane gibi görsel açıdan muhteşem animasyon dizisi",
+    id: "94605",
   },
   {
     url: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx1-GCsPm7waJ4kS.png",
     title: "Cowboy Bebop",
     query: "Cowboy Bebop gibi melankoli ve cazlı uzay western anime",
+    id: "30991",
   },
 ];
 
@@ -83,6 +97,7 @@ interface PosterCardProps {
 const PosterCard: React.FC<PosterCardProps> = ({ entry, onPosterClick }) => {
   const [hovered, setHovered] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     const checkMobile = () => {
@@ -104,7 +119,7 @@ const PosterCard: React.FC<PosterCardProps> = ({ entry, onPosterClick }) => {
       onHoverEnd={() => {
         if (!isMobile) setHovered(false);
       }}
-      onClick={() => onPosterClick(entry.query, entry.title)}
+      onClick={() => router.push(`/media/${entry.id}`)}
       animate={{
         scale: hovered ? 1.08 : 1,
         filter: isMobile
@@ -149,7 +164,7 @@ const PosterCard: React.FC<PosterCardProps> = ({ entry, onPosterClick }) => {
           {entry.title}
         </p>
         <p className="text-indigo-300 text-[9px] text-center mt-0.5 font-medium">
-          Tıkla → Öneri al
+          Tıkla → Detaylara git
         </p>
       </motion.div>
 

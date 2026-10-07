@@ -10,7 +10,9 @@ import {
   WatchStatus,
 } from "@/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Next.js'in yuttuğu slash'leri ne olursa olsun zorla geri ekleyen güvenlik katmanı
+const rawApiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
+const API_BASE_URL = rawApiUrl.replace(/^(https?:)\/+/, "$1//").replace(/\/+$/, "");
 const TOKEN_KEY = "shelflick_token";
 
 /**
@@ -67,20 +69,17 @@ export async function authFetch(
 export function formatPosterUrl(url: string | null | undefined): string {
   if (!url) return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500";
   
-  // KESİN ÇÖZÜM: Veritabanından gelen tek slash'li ('https:/') bozuk kayıtları anında onar
-  let fixedUrl = url.replace(/https?:\/([^\/])/g, "https://$1");
+  if (url.includes("/api/v1/proxy/image")) return url;
   
-  if (fixedUrl.includes("/api/v1/proxy/image")) return fixedUrl;
-  
-  if (fixedUrl.includes("image.tmdb.org")) {
-    return `${API_BASE_URL}/api/v1/proxy/image?url=${encodeURIComponent(fixedUrl)}`;
+  if (url.includes("image.tmdb.org")) {
+    return `${API_BASE_URL}/api/v1/proxy/image?url=${encodeURIComponent(url)}`;
   }
   
-  if (fixedUrl.startsWith("/")) {
-    return `${API_BASE_URL}/api/v1/proxy/image?path=${encodeURIComponent(fixedUrl)}&size=w500`;
+  if (url.startsWith("/")) {
+    return `${API_BASE_URL}/api/v1/proxy/image?path=${encodeURIComponent(url)}&size=w500`;
   }
   
-  return fixedUrl;
+  return url;
 }
 
 // Fallback curated sample recommendations if backend is unreachable
