@@ -68,9 +68,11 @@ export function formatPosterUrl(url: string | null | undefined): string {
   if (!url) {
     return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500";
   }
-  if (url.startsWith("http://localhost:8000/api/v1/proxy/image") || url.startsWith("/api/v1/proxy/image")) {
+  // Eğer link zaten proxy'den geçiyorsa (canlı veya lokal fark etmez) olduğu gibi döndür
+  if (url.includes("/api/v1/proxy/image")) {
     return url;
   }
+  // Doğrudan TMDB linkiyse canlı API adresimiz üzerinden proxy'ye yönlendir
   if (url.includes("image.tmdb.org")) {
     return `${API_BASE_URL}/api/v1/proxy/image?url=${encodeURIComponent(url)}`;
   }
