@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     TMDB_ACCESS_TOKEN: Optional[str] = Field(default=None, description="TMDB API v4 Read Access Token (Bearer)")
     TMDB_BASE_URL: str = Field(default="https://api.themoviedb.org/3", description="TMDB API v3 Base URL")
     TMDB_IMAGE_BASE_URL: str = Field(default="https://image.tmdb.org/t/p/w500", description="TMDB Poster CDN Base URL")
-    IMAGE_PROXY_BASE_URL: str = Field(
-        default="http://localhost:8000/api/v1/proxy/image",
-        description="Local image proxy endpoint to bypass DNS sinkholing",
+    IMAGE_PROXY_BASE_URL: Optional[str] = Field(
+        default=None,
+        description="Image proxy base url (defaults to relative or dynamic)",
     )
     ANILIST_GRAPHQL_URL: str = Field(default="https://graphql.anilist.co", description="AniList GraphQL Endpoint")
 
@@ -75,8 +75,10 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Collects all allowed CORS origins from localhost defaults, ALLOWED_ORIGINS, and FRONTEND_URL."""
         origins = set(self.ALLOWED_ORIGINS)
+        origins.add("https://shelflick.com")
+        origins.add("https://www.shelflick.com")
         if self.FRONTEND_URL:
-            for url in self.FRONTEND_URL.split(","):
+            for url in self.FRONTEND_URL.replace('"', '').replace("'", "").split(","):
                 cleaned = url.strip().rstrip("/")
                 if cleaned:
                     origins.add(cleaned)
