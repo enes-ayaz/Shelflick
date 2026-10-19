@@ -62,7 +62,16 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Health check
+    # Root and Health check
+    @app.get("/", tags=["System"])
+    async def root():
+        return {
+            "message": "Shelflick API is running",
+            "docs": "/docs",
+            "health": "/health",
+            "version": settings.PROJECT_VERSION,
+        }
+
     @app.get("/health", tags=["System"])
     async def health_check():
         return {
