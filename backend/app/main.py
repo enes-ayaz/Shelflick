@@ -45,6 +45,8 @@ def create_application() -> FastAPI:
         "http://127.0.0.1:3000",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
+        "https://shelflick.com",
+        "https://www.shelflick.com",
     ]
     frontend_url = os.getenv("FRONTEND_URL")
     if frontend_url and frontend_url not in cors_origins:
@@ -53,7 +55,7 @@ def create_application() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|([a-zA-Z0-9-]+\.)*vercel\.app)(:[0-9]+)?$",
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|([a-zA-Z0-9-]+\.)*vercel\.app|([a-zA-Z0-9-]+\.)*shelflick\.com)(:[0-9]+)?$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
