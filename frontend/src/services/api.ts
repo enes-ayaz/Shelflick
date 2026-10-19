@@ -11,11 +11,31 @@ import {
   WatchStatus,
 } from "@/types";
 
-const RAW_API_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:8000";
-const API_BASE_URL = RAW_API_URL.replace(/\/+$/, "");
+export function getApiBaseUrl(): string {
+  const envUrl =
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL;
+
+  if (envUrl && envUrl.trim() && !envUrl.includes("localhost")) {
+    return envUrl.trim().replace(/\/+$/, "");
+  }
+
+  // If in browser and on production domain (e.g. shelflick.com or vercel.app), default to production Render API
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") {
+      return "https://shelflick-api.onrender.com";
+    }
+  }
+
+  if (envUrl && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, "");
+  }
+
+  return "http://localhost:8000";
+}
+
+export const API_BASE_URL = getApiBaseUrl();
 const TOKEN_KEY = "shelflick_token";
 
 /**
@@ -216,7 +236,7 @@ async function authRequest<T>(path: string, body: unknown, fallbackMsg: string):
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(`${getApiBaseUrl()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -289,7 +309,7 @@ export function googleAuthApi(credential: string): Promise<AuthResponse> {
 export async function getCurrentUserApi(): Promise<UserDTO | null> {
   let response: Response;
   try {
-    response = await authFetch(`${API_BASE_URL}/api/v1/auth/me`);
+    response = await authFetch(`${getApiBaseUrl()}/api/v1/auth/me`);
   } catch {
     throw new AuthApiError("Sunucuya bağlanılamadı.", 0);
   }
@@ -304,7 +324,7 @@ export async function fetchRecommendation(
   request: RecommendationRequest
 ): Promise<RecommendationResponse> {
   try {
-    const response = await authFetch(`${API_BASE_URL}/api/v1/recommend`, {
+    const response = await authFetch(`${getApiBaseUrl()}/api/v1/recommend`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -336,7 +356,7 @@ export async function fetchRandomMasterpiece(
   mediaType?: string
 ): Promise<RecommendationResponse> {
   try {
-    const url = new URL(`${API_BASE_URL}/api/v1/recommend/random`);
+    const url = new URL(`${getApiBaseUrl()}/api/v1/recommend/random`);
     if (userId) {
       url.searchParams.set("user_id", userId);
     }
@@ -356,7 +376,7 @@ export async function fetchRandomMasterpiece(
 
 export async function addToLibrary(payload: AddToLibraryPayload): Promise<LibraryItemDTO | null> {
   try {
-    const response = await authFetch(`${API_BASE_URL}/api/v1/library/items`, {
+    const response = await authFetch(`${getApiBaseUrl()}/api/v1/library/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -383,7 +403,7 @@ export async function addToLibrary(payload: AddToLibraryPayload): Promise<Librar
 
 export async function getLibraryStats(userId?: string): Promise<LibraryStats> {
   try {
-    const url = new URL(`${API_BASE_URL}/api/v1/library/stats`);
+    const url = new URL(`${getApiBaseUrl()}/api/v1/library/stats`);
     if (userId) {
       url.searchParams.set("user_id", userId);
     }
@@ -405,7 +425,7 @@ export async function getLibraryStats(userId?: string): Promise<LibraryStats> {
 
 export async function deleteLibraryItem(itemId: string, userId?: string): Promise<boolean> {
   try {
-    const url = new URL(`${API_BASE_URL}/api/v1/library/items/${itemId}`);
+    const url = new URL(`${getApiBaseUrl()}/api/v1/library/items/${itemId}`);
     if (userId) {
       url.searchParams.set("user_id", userId);
     }
@@ -424,7 +444,7 @@ export async function fetchLibraryItems(
   statusFilter?: WatchStatus
 ): Promise<LibraryItemDTO[]> {
   try {
-    const url = new URL(`${API_BASE_URL}/api/v1/library/items`);
+    const url = new URL(`${getApiBaseUrl()}/api/v1/library/items`);
     if (userId) {
       url.searchParams.set("user_id", userId);
     }
@@ -447,7 +467,7 @@ export async function sendUserFeedback(
   action: "LIKE" | "WATCHING" | "DISLIKE" | "DISMISS"
 ): Promise<{ success: boolean }> {
   try {
-    const response = await authFetch(`${API_BASE_URL}/api/v1/feedback`, {
+    const response = await authFetch(`${getApiBaseUrl()}/api/v1/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ media_id: mediaId, action }),
@@ -469,7 +489,7 @@ export async function fetchLiveSearch(
   if (!cleanQ || cleanQ.length < 2) return [];
 
   try {
-    const url = new URL(`${API_BASE_URL}/api/v1/search/live`);
+    const url = new URL(`${getApiBaseUrl()}/api/v1/search/live`);
     url.searchParams.set("q", cleanQ);
 
     const response = await fetch(url.toString(), {

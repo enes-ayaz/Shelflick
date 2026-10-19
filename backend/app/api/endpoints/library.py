@@ -32,6 +32,7 @@ async def get_or_create_demo_user(session: AsyncSession) -> User:
     if not user:
         user = User(
             id=DEMO_USER_ID,
+            name="Demo User",
             username="demo_user",
             email="demo@shelflick.local",
             hashed_password="mock_password_hash",
