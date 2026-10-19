@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     )
 
     # External Media APIs Configuration
-    TMDB_API_KEY: Optional[str] = Field(default=None, description="TMDB API v3 Key")
+    TMDB_API_KEY: Optional[str] = Field(default="395eb3021e5f1b9189388a23318b9cc6", description="TMDB API v3 Key")
     TMDB_ACCESS_TOKEN: Optional[str] = Field(default=None, description="TMDB API v4 Read Access Token (Bearer)")
     TMDB_BASE_URL: str = Field(default="https://api.themoviedb.org/3", description="TMDB API v3 Base URL")
     TMDB_IMAGE_BASE_URL: str = Field(default="https://image.tmdb.org/t/p/w500", description="TMDB Poster CDN Base URL")

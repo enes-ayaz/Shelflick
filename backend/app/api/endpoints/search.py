@@ -76,8 +76,23 @@ async def live_search(
         candidates = []
         seen_keys = set()
 
-        # If user is searching by genre/theme, prioritize top-rated curated masterpieces of that genre!
-        if matched_theme:
+        # 1. First run aggregator search with the user's query (leveraging TMDB Discover & Turkish keywords)
+        online_candidates = await aggregator.search_all(
+            query=clean_q,
+            page=1,
+            per_source_limit=5,
+            enable_tmdb=True,
+            enable_anilist=True,
+            deduplicate_cross_source=True,
+        )
+        for item in online_candidates:
+            key = (item.source, str(item.external_id))
+            if key not in seen_keys:
+                candidates.append(item)
+                seen_keys.add(key)
+
+        # 2. If user is searching by genre/theme, supplement with top-rated curated masterpieces
+        if matched_theme and len(candidates) < 5:
             theme_keys = {matched_theme, q_lower}
             for m in CURATED_POPULAR_MOVIES:
                 meta = " ".join([g.lower() for g in m.get("genres", [])] + [t.lower() for t in m.get("themes", [])])
@@ -96,25 +111,6 @@ async def live_search(
                     if key not in seen_keys:
                         candidates.append(dto)
                         seen_keys.add(key)
-
-            # Sort theme candidates by base_score descending
-            candidates.sort(key=lambda x: x.base_score, reverse=True)
-
-        # Also run regular aggregator search with translated query if theme matched, or original query
-        search_kw = matched_theme if matched_theme else clean_q
-        online_candidates = await aggregator.search_all(
-            query=search_kw,
-            page=1,
-            per_source_limit=5,
-            enable_tmdb=True,
-            enable_anilist=True,
-            deduplicate_cross_source=True,
-        )
-        for item in online_candidates:
-            key = (item.source, str(item.external_id))
-            if key not in seen_keys:
-                candidates.append(item)
-                seen_keys.add(key)
 
         results: List[LiveSearchResultItem] = []
         for item in candidates[:5]:
