@@ -16,6 +16,7 @@ from app.schemas.rating import UserMediaResponse
 from app.schemas.unified_media import UnifiedMediaDTO
 from app.services.external.anilist_client import AniListClient
 from app.services.external.tmdb_client import TMDBClient
+from app.services.translation import is_english_or_needs_translation, resolve_turkish_synopsis
 
 logger = logging.getLogger(__name__)
 
@@ -194,9 +195,18 @@ async def add_to_library(
             user_id = DEMO_USER_ID
             await get_or_create_demo_user(db)
 
-        # 2. Enrich media details if missing (e.g. from search results)
+        # 2. Enrich media details if missing and ensure Turkish synopsis
         media_dto = payload.media
         await _enrich_media_details(media_dto)
+        try:
+            media_dto.synopsis = await resolve_turkish_synopsis(
+                synopsis=media_dto.synopsis,
+                external_id=media_dto.external_id,
+                source=media_dto.source,
+                title=media_dto.title,
+            )
+        except Exception as t_err:
+            logger.warning("Could not resolve Turkish synopsis: %s", t_err)
 
         # 3. Find or create MediaItem in database
         try:
@@ -235,8 +245,8 @@ async def add_to_library(
             db.add(db_media)
             await db.flush()
         else:
-            # Backfill any missing fields if now available
-            if media_dto.synopsis and not db_media.synopsis:
+            # Backfill any missing fields or upgrade English synopsis to Turkish
+            if media_dto.synopsis and (not db_media.synopsis or is_english_or_needs_translation(db_media.synopsis)):
                 db_media.synopsis = media_dto.synopsis
             if media_dto.poster_url and not db_media.poster_url:
                 db_media.poster_url = media_dto.poster_url
@@ -382,7 +392,24 @@ async def get_library_items(
         rows = res.all()
 
         results: List[LibraryItemDTO] = []
+        needs_commit = False
         for um, mi in rows:
+            item_synopsis = mi.synopsis or ""
+            if is_english_or_needs_translation(item_synopsis):
+                try:
+                    tr_syn = await resolve_turkish_synopsis(
+                        item_synopsis,
+                        external_id=mi.external_id,
+                        source=mi.media_source.value,
+                        title=mi.title,
+                    )
+                    if tr_syn and tr_syn != item_synopsis:
+                        mi.synopsis = tr_syn
+                        item_synopsis = tr_syn
+                        needs_commit = True
+                except Exception:
+                    pass
+
             results.append(
                 LibraryItemDTO(
                     id=um.id,
@@ -393,7 +420,7 @@ async def get_library_items(
                     original_title=mi.original_title,
                     release_year=mi.release_year,
                     poster_url=mi.poster_url,
-                    synopsis=mi.synopsis or "",
+                    synopsis=item_synopsis,
                     genres=mi.genres or [],
                     themes=mi.themes or [],
                     base_score=mi.site_score or mi.imdb_score or 0.0,
@@ -411,6 +438,13 @@ async def get_library_items(
                     watched_seasons=um.watched_seasons or 0,
                 )
             )
+
+        if needs_commit:
+            try:
+                await db.commit()
+            except Exception:
+                pass
+
         return results
     except Exception as exc:
         logger.error("Failed to fetch library items: %s", exc, exc_info=True)

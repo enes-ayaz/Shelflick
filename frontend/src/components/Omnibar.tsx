@@ -44,11 +44,23 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   const [query, setQuery] = useState(externalQuery || "");
   const [activeFilter, setActiveFilter] = useState<MediaTypeFilter>("ALL");
 
+  // Track whether the query change was initiated by the user actively typing
+  const isUserTypingRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (externalQuery !== undefined) {
+      isUserTypingRef.current = false;
       setQuery(externalQuery);
+      setIsDropdownOpen(false);
     }
   }, [externalQuery]);
+
+  useEffect(() => {
+    if (isLoading) {
+      setIsDropdownOpen(false);
+    }
+  }, [isLoading]);
 
   // Live autocomplete state
   const [liveResults, setLiveResults] = useState<LiveSearchResultItem[]>([]);
@@ -67,6 +79,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
     if (trimmed.length < 2) {
       setLiveResults([]);
       setIsSearchingLive(false);
+      setIsDropdownOpen(false);
       return;
     }
 
@@ -81,7 +94,13 @@ export const Omnibar: React.FC<OmnibarProps> = ({
       try {
         const results = await fetchLiveSearch(trimmed, controller.signal);
         setLiveResults(results.slice(0, 5));
-        setIsDropdownOpen(results.length > 0);
+        const isInputFocused = inputRef.current === document.activeElement;
+        // ONLY open dropdown if user is actively typing and focused on input, never on background clicks
+        if (isUserTypingRef.current && isInputFocused && !isLoading && results.length > 0) {
+          setIsDropdownOpen(true);
+        } else {
+          setIsDropdownOpen(false);
+        }
       } catch (err) {
         console.warn("Live search error:", err);
       } finally {
@@ -94,7 +113,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
     return () => {
       controller.abort();
     };
-  }, [debouncedQuery]);
+  }, [debouncedQuery, isLoading]);
 
   // Click outside to close dropdown
   useEffect(() => {
@@ -110,7 +129,9 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   const handleSubmit = (e?: FormEvent) => {
     if (e) e.preventDefault();
     if (!query.trim() || isLoading) return;
+    isUserTypingRef.current = false;
     setIsDropdownOpen(false);
+    inputRef.current?.blur();
     onSearch(query.trim(), activeFilter);
   };
 
@@ -124,7 +145,9 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   };
 
   const handleSelectLiveItem = (item: LiveSearchResultItem) => {
+    isUserTypingRef.current = false;
     setIsDropdownOpen(false);
+    inputRef.current?.blur();
     setQuery(item.title);
     if (onSelectLiveResult) {
       onSelectLiveResult(item);
@@ -134,6 +157,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   };
 
   const handleClear = () => {
+    isUserTypingRef.current = false;
     setQuery("");
     setLiveResults([]);
     setIsDropdownOpen(false);
@@ -157,16 +181,25 @@ export const Omnibar: React.FC<OmnibarProps> = ({
           <Search className="w-5 h-5 text-neutral-400 mr-3 flex-shrink-0 group-focus-within:text-indigo-400 transition-colors" />
 
           <input
+            ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => {
+              isUserTypingRef.current = true;
               setQuery(e.target.value);
               if (e.target.value.trim().length >= 2 && liveResults.length > 0) {
                 setIsDropdownOpen(true);
               }
             }}
             onFocus={() => {
-              if (liveResults.length > 0) setIsDropdownOpen(true);
+              if (isUserTypingRef.current && liveResults.length > 0) {
+                setIsDropdownOpen(true);
+              }
+            }}
+            onBlur={() => {
+              setTimeout(() => {
+                isUserTypingRef.current = false;
+              }, 200);
             }}
             onKeyDown={handleKeyDown}
             disabled={isLoading}

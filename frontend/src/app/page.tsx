@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { BackgroundWall } from "@/components/BackgroundWall";
 import { Omnibar } from "@/components/Omnibar";
@@ -111,12 +111,21 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (recommendation) {
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 120);
+    }
+  }, [recommendation]);
+
   /** Called when user clicks a poster on the background wall */
   const handlePosterClick = (query: string, title?: string) => {
     const searchTarget = title || query;
     setActiveQuery(searchTarget);
     handleSearch(searchTarget, "ALL");
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // Add to library and update state in real-time with toggle support
@@ -400,7 +409,7 @@ export default function Home() {
         </AnimatePresence>
 
         {/* 5. Skeleton Loading Card or SuggestionCard */}
-        <div className="w-full mt-6">
+        <div ref={resultsRef} className="w-full mt-6">
           <AnimatePresence mode="wait">
             {isLoading && (
               <motion.div
