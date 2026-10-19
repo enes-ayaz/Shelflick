@@ -63,6 +63,19 @@ TR_EN_KEYWORD_MAP: Dict[str, str] = {
     "animasyon": "animation",
     "kahraman": "action",
     "derin kurgu": "psychological",
+    "tarih": "history",
+    "tarihi": "historical",
+    "tarihsel": "history",
+    "dönem": "period",
+    "orta çağ": "medieval",
+    "antik": "ancient",
+    "savaş": "war",
+    "askeri": "military",
+    "biyografi": "biography",
+    "biyografik": "biography",
+    "western": "western",
+    "kovboy": "western",
+    "belgesel": "documentary",
 }
 
 KNOWN_MOVIE_TITLES = {
@@ -97,6 +110,12 @@ KNOWN_MOVIE_TITLES = {
     "inglourious basterds",
     "requiem for a dream",
     "donnie darko",
+    "schindler's list",
+    "schindlers list",
+    "the pianist",
+    "1917",
+    "saving private ryan",
+    "braveheart",
 }
 
 KNOWN_SERIES_TITLES = {
@@ -112,6 +131,9 @@ KNOWN_SERIES_TITLES = {
     "stranger things",
     "black mirror",
     "arcane",
+    "band of brothers",
+    "vikings",
+    "peaky blinders",
 }
 
 KNOWN_ANIME_TITLES = {
@@ -306,17 +328,23 @@ class LLMClient:
             norm_c = _normalize_title(cand["title"])
             norm_q = _normalize_title(clean_p_lower)
 
+            # Detect if query is a thematic/discovery query vs a literal title search
+            is_theme_query = any(k in clean_p_lower for k in TR_EN_KEYWORD_MAP) or any(
+                k in clean_p_lower for k in ["film", "filmi", "dizi", "dizisi", "anime", "öner", "en iyi", "tavsiye", "ilgili", "hakkında"]
+            )
+
             # If user asked for "X gibi...", penalize returning X itself so we recommend similar titles
             if ref_title_lower and (c_title_low == ref_title_lower or ref_title_lower in c_title_low):
                 relevance = -10.0
-            elif not ref_title_lower and norm_q and (norm_c == norm_q or norm_q in norm_c or norm_c in norm_q):
-                # Direct title match gets highest priority
+            elif not is_theme_query and not ref_title_lower and norm_q and (norm_c == norm_q):
+                # Direct title match gets highest priority ONLY if query is a true title match!
                 relevance = 100.0
             else:
                 # Keyword overlap score + base rating weight + controlled randomness for fresh discovery
-                overlap = sum(2.5 for tok in expanded_tokens if tok in meta)
-                score_weight = (cand["score"] or 8.0) * 0.4
-                jitter = random.uniform(0.0, 1.8)
+                overlap = sum(5.0 for tok in expanded_tokens if tok in meta)
+                c_score = cand.get("score") or 0.0
+                score_weight = (c_score * 2.5) if c_score >= 6.0 else -20.0
+                jitter = random.uniform(0.0, 0.4)
                 relevance = overlap + score_weight + jitter
 
             scored_candidates.append((relevance, cand))
@@ -348,17 +376,29 @@ class LLMClient:
                 selected_ids.add(cand["id"])
 
         recommendations_list = []
+        is_history_theme = any(k in clean_p_lower for k in ["tarih", "tarihi", "history", "savaş", "war", "biyografi", "orta çağ", "dönem"])
         for rank, cand in enumerate(selected[:5], 1):
             c_id = cand["id"]
             c_title = cand["title"]
-            if rank == 1 and not ref_title_lower and clean_p_lower and clean_p_lower in c_title.lower():
+            if not is_theme_query and rank == 1 and not ref_title_lower and clean_p_lower and clean_p_lower in c_title.lower():
                 just = f"Doğrudan aradığın '{c_title}', yüksek puanı ve güçlü atmosferiyle listenin zirvesinde yer alıyor. Beklentini tam olarak karşılayacak birincil yapımdır."
+            elif is_history_theme:
+                if rank == 1:
+                    just = f"Tarih ve dönem sinemasının en etkileyici başyapıtlarından biri olan '{c_title}', sunduğu tarihsel gerçekçilik, güçlü prodüksiyon ve sarsıcı derinlikle aradığın hissi eksiksiz yaşatacaktır."
+                elif rank == 2:
+                    just = f"'{c_title}', gerçek olaylardan ve tarihsel dönüm noktalarından ilham alan sarsıcı kurgusuyla türün en öne çıkan başyapıtlarındandır."
+                elif rank == 3:
+                    just = f"Tarihsel atmosferi başarıyla yansıtan '{c_title}', dönemin ruhunu, çatışmalarını ve insan psikolojisini ustalıkla işleyen yüksek puanlı bir klasiktir."
+                elif rank == 4:
+                    just = f"Dönem kurgusu ve güçlü oyunculuklarıyla öne çıkan '{c_title}', tarih meraklılarının izleme listesinde mutlaka yer alması gereken bir eserdir."
+                else:
+                    just = f"Tarih türünün en prestijli örneklerinden biri olan '{c_title}', sürükleyici anlatımı ve kalıcı etkisiyle keşif listene büyük değer katacaktır."
             elif rank == 1:
                 just = f"Aradığın atmosferi ve tematik derinliği en çarpıcı şekilde işleyen '{c_title}', zevkine tam oturacak öncelikli bir başyapıttır. Kurgusal temposu seni ilk dakikadan içine çekecek."
             elif rank == 2:
-                just = f"'{c_title}', benzer karanlık ve sürükleyici tonlarıyla alternatifler arasında öne çıkan güçlü bir yapımdır. Karakter çatışmaları ve anlatım diliyle unutulmaz bir deneyim sunar."
+                just = f"'{c_title}', benzer sürükleyici tonlarıyla alternatifler arasında öne çıkan güçlü bir yapımdır. Karakter çatışmaları ve anlatım diliyle unutulmaz bir deneyim sunar."
             elif rank == 3:
-                just = f"Farklı bir perspektif arayanlar için '{c_title}', özgün dünyası ve yüksek gerilim dozajıyla dikkat çeker. Türün klişelerinden uzak, rafine bir kurguya sahiptir."
+                just = f"Farklı bir perspektif arayanlar için '{c_title}', özgün dünyası ve yüksek anlatım dozajıyla dikkat çeker. Türün klişelerinden uzak, rafine bir kurguya sahiptir."
             elif rank == 4:
                 just = f"Derinlikli senaryosu ve görsel atmosferiyle '{c_title}', aradığın hissi tamamlayacak niteliktedir. İzleme listene mutlaka eklemen gereken etkileyici bir eserdir."
             else:
@@ -428,6 +468,22 @@ class RecommendationEngine:
 
         themes: List[str] = []
         theme_patterns = [
+            ("tarih", "tarih"),
+            ("tarihi", "tarih"),
+            ("tarihsel", "tarih"),
+            ("history", "tarih"),
+            ("historical", "tarih"),
+            ("dönem", "tarih"),
+            ("orta çağ", "tarih"),
+            ("antik", "tarih"),
+            ("osmanlı", "tarih"),
+            ("roma", "tarih"),
+            ("savaş", "savaş"),
+            ("war", "savaş"),
+            ("askeri", "savaş"),
+            ("biyografi", "biyografi"),
+            ("biyografik", "biyografi"),
+            ("biography", "biyografi"),
             ("psikolojik", "psikolojik"),
             ("cyberpunk", "cyberpunk"),
             ("siber-punk", "cyberpunk"),
@@ -442,9 +498,23 @@ class RecommendationEngine:
             ("uzay", "uzay"),
             ("rüya", "rüya"),
             ("suç", "suç"),
+            ("polisiye", "suç"),
+            ("dedektif", "gizem"),
             ("gizem", "gizem"),
+            ("korku", "korku"),
+            ("horror", "korku"),
+            ("komedi", "komedi"),
+            ("comedy", "komedi"),
+            ("romantik", "romantik"),
+            ("romance", "romantik"),
+            ("aşk", "romantik"),
+            ("dram", "dram"),
+            ("drama", "dram"),
             ("fantezi", "fantastik"),
             ("fantastik", "fantastik"),
+            ("western", "western"),
+            ("kovboy", "western"),
+            ("belgesel", "belgesel"),
             ("ahlaki çöküş", "suç"),
             ("kimlik buhranı", "psikolojik"),
             ("twist", "gerilim"),
@@ -483,6 +553,16 @@ class RecommendationEngine:
                 media_type = "MOVIE"
 
         # 6. Determine if direct title search
+        discovery_indicator_words = {
+            "film", "filmi", "filmleri", "filmler", "movie", "movies",
+            "dizi", "dizisi", "dizileri", "diziler", "series", "tv",
+            "anime", "animeleri", "animesi", "animeler",
+            "öner", "önerisi", "önerileri", "önerir", "önerir misin", "tavsiye", "tavsiyesi",
+            "en iyi", "yüksek puanlı", "kaliteli", "güzel", "popüler", "başyapıt",
+            "ilgili", "hakkında", "konulu", "türünde", "tarzında", "benzeri", "gibi",
+        }
+        has_discovery_words = any(w in clean_lower for w in discovery_indicator_words)
+
         has_descriptors = bool(
             ref_titles
             or excluded
@@ -491,6 +571,7 @@ class RecommendationEngine:
             or "içermeyen" in clean_lower
             or len(moods) >= 1
             or len(themes) >= 1
+            or has_discovery_words
         )
         word_count = len(stripped_title.split())
         is_known = (
@@ -607,9 +688,29 @@ class RecommendationEngine:
             per_source_limit=max(limit, 12),
         )
 
-        # Supplement with popular/curated masterpieces so the pool is always rich & diverse
-        # (and never stuck on a single title like 'Monster')
-        if len(candidates) < 10 or not intent.is_direct_title_search:
+        # Supplement with curated masterpieces that match the intent's target themes!
+        if intent.target_themes:
+            from app.services.external.tmdb_client import CURATED_POPULAR_MOVIES, CURATED_POPULAR_SERIES, TMDBClient
+            theme_keys = {t.lower() for t in intent.target_themes + intent.mood_keywords + trans_themes}
+            theme_matches: List[UnifiedMediaDTO] = []
+            
+            if enable_tmdb:
+                for m in CURATED_POPULAR_MOVIES:
+                    meta = " ".join([g.lower() for g in m.get("genres", [])] + [t.lower() for t in m.get("themes", [])])
+                    if any(tk in meta for tk in theme_keys):
+                        theme_matches.append(TMDBClient._dict_to_dto(m, "TMDB_MOVIE"))
+                for s in CURATED_POPULAR_SERIES:
+                    meta = " ".join([g.lower() for g in s.get("genres", [])] + [t.lower() for t in s.get("themes", [])])
+                    if any(tk in meta for tk in theme_keys):
+                        theme_matches.append(TMDBClient._dict_to_dto(s, "TMDB_SERIES"))
+            
+            seen_keys = {(c.source, str(c.external_id)) for c in candidates}
+            for tm in theme_matches:
+                key = (tm.source, str(tm.external_id))
+                if key not in seen_keys:
+                    candidates.insert(0, tm)
+                    seen_keys.add(key)
+        elif len(candidates) < 10 or not intent.is_direct_title_search:
             try:
                 supplement = await self.aggregator.get_random_masterpieces(
                     limit=20,
@@ -811,11 +912,11 @@ class RecommendationEngine:
 
         best_match = None
         norm_target = _normalize_title(search_target)
-        if candidates and (intent.is_direct_title_search or norm_target):
+        if candidates and intent.is_direct_title_search and norm_target:
             best_match = next((c for c in candidates if _normalize_title(c.title) == norm_target), None)
             if not best_match and len(norm_target) >= 3:
                 best_match = next(
-                    (c for c in candidates if norm_target in _normalize_title(c.title) or _normalize_title(c.title) in norm_target),
+                    (c for c in candidates if norm_target == _normalize_title(c.title)),
                     None,
                 )
 
