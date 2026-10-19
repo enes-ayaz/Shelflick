@@ -92,7 +92,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
     async function searchLive() {
       setIsSearchingLive(true);
       try {
-        const results = await fetchLiveSearch(trimmed, controller.signal);
+        const results = await fetchLiveSearch(trimmed, controller.signal, activeFilter);
         setLiveResults(results.slice(0, 5));
         const isInputFocused = inputRef.current === document.activeElement;
         // ONLY open dropdown if user is actively typing and focused on input, never on background clicks
@@ -113,7 +113,7 @@ export const Omnibar: React.FC<OmnibarProps> = ({
     return () => {
       controller.abort();
     };
-  }, [debouncedQuery, isLoading]);
+  }, [debouncedQuery, isLoading, activeFilter]);
 
   // Click outside to close dropdown
   useEffect(() => {

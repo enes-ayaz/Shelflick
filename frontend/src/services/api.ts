@@ -4,6 +4,7 @@ import {
   LibraryItemDTO,
   LibraryStats,
   LiveSearchResultItem,
+  MediaTypeFilter,
   RecommendationRequest,
   RecommendationResponse,
   UnifiedMediaDTO,
@@ -483,7 +484,8 @@ export async function sendUserFeedback(
  */
 export async function fetchLiveSearch(
   query: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  mediaType?: MediaTypeFilter
 ): Promise<LiveSearchResultItem[]> {
   const cleanQ = query.trim();
   if (!cleanQ || cleanQ.length < 2) return [];
@@ -491,6 +493,9 @@ export async function fetchLiveSearch(
   try {
     const url = new URL(`${getApiBaseUrl()}/api/v1/search/live`);
     url.searchParams.set("q", cleanQ);
+    if (mediaType && mediaType !== "ALL") {
+      url.searchParams.set("type", mediaType);
+    }
 
     const response = await fetch(url.toString(), {
       method: "GET",

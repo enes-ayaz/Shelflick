@@ -666,7 +666,8 @@ class RecommendationEngine:
     ) -> List[UnifiedMediaDTO]:
         """Fetches a diverse, balanced pool of candidates from MediaAggregator and curated pools."""
         enable_tmdb = intent.media_type_filter in ("ALL", "MOVIE", "SERIES")
-        enable_anilist = intent.media_type_filter in ("ALL", "ANIME")
+        # Anime is STRICTLY enabled only when explicitly requested (ANIME button or anime title/keyword)
+        enable_anilist = (intent.media_type_filter == "ANIME")
 
         clean_user_prompt = re.sub(r"\[(ALL|ANIME|MOVIE|SERIES)\]", "", user_prompt, flags=re.IGNORECASE).strip()
 
@@ -718,6 +719,8 @@ class RecommendationEngine:
                 )
                 seen_keys = {(c.source, str(c.external_id)) for c in candidates}
                 for item in supplement:
+                    if intent.media_type_filter != "ANIME" and item.source == "ANILIST":
+                        continue
                     key = (item.source, str(item.external_id))
                     if key not in seen_keys:
                         candidates.append(item)
@@ -732,6 +735,8 @@ class RecommendationEngine:
             candidates = [c for c in candidates if c.source == "TMDB_SERIES"]
         elif intent.media_type_filter == "ANIME":
             candidates = [c for c in candidates if c.source == "ANILIST"]
+        else:
+            candidates = [c for c in candidates if c.source != "ANILIST"]
 
         # Exclude reference title itself when user asks "X gibi..."
         if intent.reference_titles:

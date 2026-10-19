@@ -210,7 +210,7 @@ class MediaAggregatorService:
                 return shuffled[: max(limit, 25)]
 
         tasks = []
-        if target_type in ("ALL", "ANIME"):
+        if target_type == "ANIME":
             random_anime_page = random.randint(1, 5)
             tasks.append(
                 asyncio.wait_for(
@@ -246,6 +246,8 @@ class MediaAggregatorService:
             candidates = [c for c in candidates if c.source == "TMDB_MOVIE"]
         elif target_type == "SERIES":
             candidates = [c for c in candidates if c.source == "TMDB_SERIES"]
+        else:
+            candidates = [c for c in candidates if c.source != "ANILIST"]
 
         deduped = self._deduplicate(candidates)
         if use_cache and deduped:
