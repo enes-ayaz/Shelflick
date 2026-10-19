@@ -711,7 +711,8 @@ class RecommendationEngine:
                 if key not in seen_keys:
                     candidates.insert(0, tm)
                     seen_keys.add(key)
-        elif len(candidates) < 10 or not intent.is_direct_title_search:
+
+        if len(candidates) < 10 or not intent.is_direct_title_search:
             try:
                 supplement = await self.aggregator.get_random_masterpieces(
                     limit=20,
@@ -721,12 +722,27 @@ class RecommendationEngine:
                 for item in supplement:
                     if intent.media_type_filter != "ANIME" and item.source == "ANILIST":
                         continue
+                    if intent.media_type_filter == "ANIME" and item.source != "ANILIST":
+                        continue
                     key = (item.source, str(item.external_id))
                     if key not in seen_keys:
                         candidates.append(item)
                         seen_keys.add(key)
             except Exception as exc:
                 logger.debug("Supplement candidate fetch skipped: %s", exc)
+
+        # Ensure anime mode always has high-scoring anime candidates to rank if title search was too narrow
+        if intent.media_type_filter == "ANIME" and len(candidates) < 5:
+            try:
+                anime_pop = await self.aggregator.anilist_client.get_popular_anime(page=1, per_page=20)
+                seen_keys = {(c.source, str(c.external_id)) for c in candidates}
+                for item in anime_pop:
+                    key = (item.source, str(item.external_id))
+                    if key not in seen_keys:
+                        candidates.append(item)
+                        seen_keys.add(key)
+            except Exception as exc:
+                logger.debug("AniList popular fallback skipped: %s", exc)
 
         # Enforce media_type filter before scoring/balancing
         if intent.media_type_filter == "MOVIE":
@@ -1053,6 +1069,8 @@ class RecommendationEngine:
                     stmt = stmt.where(MediaItem.media_source == MediaSource.TMDB_SERIES)
                 elif target_filter == "ANIME":
                     stmt = stmt.where(MediaItem.media_source == MediaSource.ANILIST)
+                else:
+                    stmt = stmt.where(MediaItem.media_source != MediaSource.ANILIST)
 
                 if user_id:
                     subquery = select(UserMedia.media_id).where(UserMedia.user_id == user_id)
@@ -1091,11 +1109,11 @@ class RecommendationEngine:
             else:
                 if target_filter == "MOVIE":
                     selected_dto = UnifiedMediaDTO(
-                        external_id="tt0816692",
+                        external_id="157336",
                         source="TMDB_MOVIE",
                         title="Interstellar",
                         release_year=2014,
-                        poster_url="https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_SX500.jpg",
+                        poster_url="https://image.tmdb.org/t/p/w500/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg",
                         synopsis="When Earth becomes uninhabitable in the future, a farmer and ex-NASA pilot is tasked to pilot a spacecraft to find a new planet for humans.",
                         genres=["Adventure", "Drama", "Science Fiction"],
                         themes=["space exploration", "time dilation"],
@@ -1104,18 +1122,18 @@ class RecommendationEngine:
                     )
                 elif target_filter == "SERIES":
                     selected_dto = UnifiedMediaDTO(
-                        external_id="169",
+                        external_id="1396",
                         source="TMDB_SERIES",
                         title="Breaking Bad",
                         release_year=2008,
-                        poster_url="https://static.tvmaze.com/uploads/images/original_untouched/0/2400.jpg",
+                        poster_url="https://image.tmdb.org/t/p/w500/ggFHVNu6YYI5L9pCfOacjizRGt.jpg",
                         synopsis="A chemistry teacher diagnosed with inoperable lung cancer turns to manufacturing methamphetamine.",
                         genres=["Drama", "Crime"],
                         themes=["drugs", "moral descent"],
                         base_score=9.5,
                         vote_count=2100000,
                     )
-                else:
+                elif target_filter == "ANIME":
                     selected_dto = UnifiedMediaDTO(
                         external_id="16498",
                         source="ANILIST",
@@ -1127,6 +1145,19 @@ class RecommendationEngine:
                         themes=["post-apocalyptic", "military"],
                         base_score=8.5,
                         vote_count=500000,
+                    )
+                else:
+                    selected_dto = UnifiedMediaDTO(
+                        external_id="238",
+                        source="TMDB_MOVIE",
+                        title="The Godfather",
+                        release_year=1972,
+                        poster_url="https://image.tmdb.org/t/p/w500/3bhkrj58Vtu7enYsRolD1fZdja1.jpg",
+                        synopsis="Spanning the years 1945 to 1955, a chronicle of the fictional Italian-American Corleone crime family.",
+                        genres=["Drama", "Crime"],
+                        themes=["mafia", "family", "loyalty"],
+                        base_score=8.7,
+                        vote_count=1900000,
                     )
 
         genre_text = ", ".join(selected_dto.genres[:2]) if selected_dto.genres else "etkileyici"
