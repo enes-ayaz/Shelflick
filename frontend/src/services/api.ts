@@ -2,6 +2,7 @@ import {
   AddToLibraryPayload,
   AuthResponse,
   LibraryItemDTO,
+  LibraryStats,
   LiveSearchResultItem,
   RecommendationRequest,
   RecommendationResponse,
@@ -10,9 +11,7 @@ import {
   WatchStatus,
 } from "@/types";
 
-// Next.js'in yuttuğu slash'leri ne olursa olsun zorla geri ekleyen güvenlik katmanı
-const rawApiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").trim();
-const API_BASE_URL = rawApiUrl.replace(/^(https?:)\/+/, "$1//").replace(/\/+$/, "");
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const TOKEN_KEY = "shelflick_token";
 
 /**
@@ -63,22 +62,47 @@ export async function authFetch(
 }
 
 /**
- * Ensures TMDB images are routed through the backend DoH Image Proxy
- * to bypass local ISP DNS sinkholing, while leaving AniList and direct CDNs intact.
+ * Formats poster URLs. Directly serves unblocked CDN images (m.media-amazon.com,
+ * static.tvmaze.com, s4.anilist.co, mzstatic.com) and rewrites any legacy image.tmdb.org
+ * or /api/v1/proxy/image URLs to the global wsrv.nl CDN so the backend bears 0 proxy load.
  */
 export function formatPosterUrl(url: string | null | undefined): string {
-  if (!url) return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500";
-  
-  if (url.includes("/api/v1/proxy/image")) return url;
-  
+  if (!url) {
+    return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500";
+  }
+
+  // If already proxied via wsrv.nl CDN, return as-is
+  if (url.startsWith("https://wsrv.nl/?url=")) {
+    return url;
+  }
+
+  // Handle legacy backend proxy URLs (/api/v1/proxy/image)
+  if (url.includes("/api/v1/proxy/image")) {
+    try {
+      const parsed = new URL(url, "http://localhost:8000");
+      const targetParam = parsed.searchParams.get("url");
+      const pathParam = parsed.searchParams.get("path");
+      const sizeParam = parsed.searchParams.get("size") || "w500";
+
+      if (targetParam) {
+        return `https://wsrv.nl/?url=${encodeURIComponent(targetParam)}`;
+      }
+      if (pathParam) {
+        const cleanPath = pathParam.replace(/^\/+/, "");
+        const tmdbUrl = `https://image.tmdb.org/t/p/${sizeParam}/${cleanPath}`;
+        return `https://wsrv.nl/?url=${encodeURIComponent(tmdbUrl)}`;
+      }
+    } catch {
+      // Fall through if URL parsing fails
+    }
+  }
+
+  // Handle direct image.tmdb.org URLs (bypassing Turkish ISP DNS blocks via wsrv.nl)
   if (url.includes("image.tmdb.org")) {
-    return `${API_BASE_URL}/api/v1/proxy/image?url=${encodeURIComponent(url)}`;
+    return `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
   }
-  
-  if (url.startsWith("/")) {
-    return `${API_BASE_URL}/api/v1/proxy/image?path=${encodeURIComponent(url)}&size=w500`;
-  }
-  
+
+  // Direct fast unblocked CDNs (m.media-amazon.com, static.tvmaze.com, s4.anilist.co, mzstatic.com, etc.)
   return url;
 }
 
@@ -145,64 +169,129 @@ const FALLBACK_RANDOM: RecommendationResponse = {
 
 // ================= AUTH API CALLS ================= //
 
-export async function registerApi(
-  email: string,
-  password: string,
-  name?: string
-): Promise<AuthResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.detail || "Kayıt olurken bir hata oluştu.");
+/** Error thrown by auth calls; `status` is 0 for network failures. */
+export class AuthApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AuthApiError";
+    this.status = status;
   }
-  return data as AuthResponse;
 }
 
-export async function loginApi(
-  email: string,
-  password: string
-): Promise<AuthResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+const VALIDATION_FIELD_LABELS: Record<string, string> = {
+  email: "E-posta",
+  password: "Şifre",
+  name: "Ad",
+  credential: "Google kimliği",
+};
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.detail || "Giriş yapılırken bir hata oluştu.");
+function extractErrorDetail(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const detail = (data as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  // FastAPI / Pydantic 422: [{ loc: [...], msg: "...", type: "..." }]
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { loc?: unknown[]; type?: string; msg?: string };
+    const field = String(first.loc?.[first.loc.length - 1] ?? "");
+    const label = VALIDATION_FIELD_LABELS[field] || "Alan";
+    if (field === "email") return "Geçerli bir e-posta adresi girin.";
+    if (first.type?.includes("too_short")) {
+      return field === "password" ? "Şifre en az 6 karakter olmalıdır." : `${label} çok kısa.`;
+    }
+    if (first.type?.includes("too_long")) return `${label} çok uzun.`;
+    if (first.type === "missing") return `${label} alanı zorunludur.`;
+    return `${label}: ${first.msg || "geçersiz değer"}`;
   }
-  return data as AuthResponse;
+  return null;
 }
 
-export async function googleAuthApi(credential: string): Promise<AuthResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/google`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credential }),
-  });
+async function authRequest<T>(path: string, body: unknown, fallbackMsg: string): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.detail || "Google ile giriş yapılırken bir hata oluştu.");
-  }
-  return data as AuthResponse;
-}
-
-export async function getCurrentUserApi(): Promise<UserDTO | null> {
+  let response: Response;
   try {
-    const response = await authFetch(`${API_BASE_URL}/api/v1/auth/me`);
-    if (!response.ok) return null;
-    return await response.json();
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
   } catch (err) {
-    console.warn("Failed to fetch current user profile:", err);
-    return null;
+    const aborted = err instanceof DOMException && err.name === "AbortError";
+    throw new AuthApiError(
+      aborted
+        ? "Sunucu yanıt vermedi (zaman aşımı). Lütfen tekrar deneyin."
+        : "Sunucuya bağlanılamadı. Backend'in çalıştığından ve internet bağlantınızdan emin olun.",
+      0
+    );
+  } finally {
+    clearTimeout(timeout);
   }
+
+  let data: unknown = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const detail = extractErrorDetail(data);
+    const msg =
+      detail ||
+      (response.status >= 500
+        ? "Sunucuda beklenmeyen bir hata oluştu. Lütfen biraz sonra tekrar deneyin."
+        : fallbackMsg);
+    throw new AuthApiError(msg, response.status);
+  }
+
+  if (!data || typeof data !== "object" || !(data as { access_token?: string }).access_token) {
+    throw new AuthApiError("Sunucudan geçersiz yanıt alındı.", response.status);
+  }
+  return data as T;
+}
+
+export function registerApi(email: string, password: string, name?: string): Promise<AuthResponse> {
+  return authRequest<AuthResponse>(
+    "/api/v1/auth/register",
+    { email: email.trim(), password, name: name?.trim() || undefined },
+    "Kayıt olurken bir hata oluştu."
+  );
+}
+
+export function loginApi(email: string, password: string): Promise<AuthResponse> {
+  return authRequest<AuthResponse>(
+    "/api/v1/auth/login",
+    { email: email.trim(), password },
+    "Giriş yapılırken bir hata oluştu."
+  );
+}
+
+export function googleAuthApi(credential: string): Promise<AuthResponse> {
+  return authRequest<AuthResponse>(
+    "/api/v1/auth/google",
+    { credential },
+    "Google ile giriş yapılırken bir hata oluştu."
+  );
+}
+
+/**
+ * Returns the current user, `null` if the token is invalid (401/403),
+ * and throws AuthApiError(status 0) on network/server problems so the
+ * caller can keep the session instead of logging the user out.
+ */
+export async function getCurrentUserApi(): Promise<UserDTO | null> {
+  let response: Response;
+  try {
+    response = await authFetch(`${API_BASE_URL}/api/v1/auth/me`);
+  } catch {
+    throw new AuthApiError("Sunucuya bağlanılamadı.", 0);
+  }
+  if (response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new AuthApiError("Profil alınamadı.", response.status);
+  return (await response.json()) as UserDTO;
 }
 
 // ================= MEDIA & RECOMMENDATION APIS ================= //
@@ -274,6 +363,8 @@ export async function addToLibrary(payload: AddToLibraryPayload): Promise<Librar
         user_score: payload.user_score,
         personal_notes: payload.personal_notes,
         drop_reason: payload.drop_reason,
+        watched_episodes: payload.watched_episodes,
+        watched_seasons: payload.watched_seasons,
       }),
     });
     if (!response.ok) {
@@ -283,6 +374,28 @@ export async function addToLibrary(payload: AddToLibraryPayload): Promise<Librar
   } catch (error) {
     console.error("Error adding item to library:", error);
     return null;
+  }
+}
+
+export async function getLibraryStats(userId?: string): Promise<LibraryStats> {
+  try {
+    const url = new URL(`${API_BASE_URL}/api/v1/library/stats`);
+    if (userId) {
+      url.searchParams.set("user_id", userId);
+    }
+    const response = await authFetch(url.toString());
+    if (!response.ok) {
+      throw new Error(`Failed to fetch library stats: HTTP ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching library stats:", error);
+    return {
+      total_watch_time_minutes: 0,
+      total_watch_time_formatted: { days: 0, hours: 0, minutes: 0 },
+      total_episodes_watched: 0,
+      radar_items: [],
+    };
   }
 }
 

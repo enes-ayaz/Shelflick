@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import random
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -9,7 +11,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.media import MediaItem
+from app.models.media import MediaItem, MediaSource
 from app.models.user_media import UserMedia, WatchStatus
 from app.schemas.unified_media import UnifiedMediaDTO
 from app.services.llm.prompts import (
@@ -27,9 +29,124 @@ from app.services.media_aggregator import MediaAggregatorService
 
 logger = logging.getLogger(__name__)
 
+# Quick keyword mapping from Turkish search intents to international API keywords
+TR_EN_KEYWORD_MAP: Dict[str, str] = {
+    "karanlık": "dark",
+    "psikolojik": "psychological",
+    "gerilim": "thriller",
+    "korku": "horror",
+    "bilim kurgu": "science fiction",
+    "distopya": "dystopian",
+    "distopik": "dystopian",
+    "siber-punk": "cyberpunk",
+    "cyberpunk": "cyberpunk",
+    "intikam": "revenge",
+    "aksiyon": "action",
+    "macera": "adventure",
+    "gizem": "mystery",
+    "dram": "drama",
+    "komedi": "comedy",
+    "romantik": "romance",
+    "fantastik": "fantasy",
+    "fantezi": "fantasy",
+    "zaman yolculuğu": "time travel",
+    "zaman bükücü": "time travel",
+    "uzay": "space",
+    "rüya": "dream",
+    "suç": "crime",
+    "dedektif": "mystery",
+    "melankoli": "melancholic",
+    "melankolik": "melancholic",
+    "ahlaki çöküş": "crime",
+    "kimlik buhranı": "psychological",
+    "twist": "thriller",
+    "animasyon": "animation",
+    "kahraman": "action",
+    "derin kurgu": "psychological",
+}
+
+KNOWN_MOVIE_TITLES = {
+    "fight club",
+    "interstellar",
+    "inception",
+    "the matrix",
+    "matrix",
+    "the dark knight",
+    "pulp fiction",
+    "parasite",
+    "dune",
+    "whiplash",
+    "se7en",
+    "gladiator",
+    "the prestige",
+    "memento",
+    "the godfather",
+    "the shawshank redemption",
+    "blade runner 2049",
+    "arrival",
+    "shutter island",
+    "no country for old men",
+    "oldboy",
+    "eternal sunshine of the spotless mind",
+    "the silence of the lambs",
+    "mad max",
+    "prisoners",
+    "gone girl",
+    "joker",
+    "oppenheimer",
+    "inglourious basterds",
+    "requiem for a dream",
+    "donnie darko",
+}
+
+KNOWN_SERIES_TITLES = {
+    "breaking bad",
+    "game of thrones",
+    "dark",
+    "chernobyl",
+    "severance",
+    "better call saul",
+    "mr. robot",
+    "mr robot",
+    "true detective",
+    "stranger things",
+    "black mirror",
+    "arcane",
+}
+
+KNOWN_ANIME_TITLES = {
+    "monster",
+    "attack on titan",
+    "shingeki no kyojin",
+    "steins;gate",
+    "steins gate",
+    "cowboy bebop",
+    "death note",
+    "fullmetal alchemist",
+    "fullmetal alchemist: brotherhood",
+    "fullmetal alchemist brotherhood",
+    "vinland saga",
+    "neon genesis evangelion",
+    "evangelion",
+    "hunter x hunter",
+    "jujutsu kaisen",
+    "demon slayer",
+    "kimetsu no yaiba",
+    "berserk",
+    "naruto",
+    "one piece",
+    "bleach",
+    "spirited away",
+}
+
+
+def _normalize_title(t: str) -> str:
+    """Normalizes title string by stripping punctuation, extra whitespace, and casing."""
+    return re.sub(r"[^\w\s]", "", t).lower().strip()
+
 
 class LLMClient:
-    """Multi-provider asynchronous LLM client supporting Google Gemini and OpenAI compatible APIs."""
+    """Multi-provider asynchronous LLM client supporting Google Gemini, OpenAI, and diverse heuristic fallback."""
 
     def __init__(
         self,
@@ -45,11 +162,11 @@ class LLMClient:
         self._openai_client: Optional[AsyncOpenAI] = None
 
     def _get_openai_client(self) -> Optional[AsyncOpenAI]:
-        """Lazy-loads an AsyncOpenAI client instance."""
         if self._openai_client is None and self.openai_api_key:
             self._openai_client = AsyncOpenAI(
                 api_key=self.openai_api_key,
                 base_url=self.openai_base_url,
+                timeout=3.5,
             )
         return self._openai_client
 
@@ -58,28 +175,30 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
     ) -> Dict[str, Any]:
-        """Dispatches JSON prompt to configured LLM (Gemini REST, OpenAI, or smart heuristic fallback)."""
-        # 1. Try Google Gemini REST API if GEMINI_API_KEY is present
+        """Dispatches JSON prompt to configured LLM with strict timeout, falling back to fast heuristic engine."""
         if self.gemini_api_key:
             try:
-                return await self._call_gemini_rest(system_prompt, user_prompt)
+                return await asyncio.wait_for(
+                    self._call_gemini_rest(system_prompt, user_prompt),
+                    timeout=3.5,
+                )
             except Exception as exc:
-                logger.warning("Gemini REST API invocation failed, falling back: %s", exc)
+                logger.warning("Gemini REST API invocation failed/timed out, using fast fallback: %s", exc)
 
-        # 2. Try OpenAI compatible API if OPENAI_API_KEY is present
         openai_cli = self._get_openai_client()
         if openai_cli:
             try:
-                return await self._call_openai(openai_cli, system_prompt, user_prompt)
+                return await asyncio.wait_for(
+                    self._call_openai(openai_cli, system_prompt, user_prompt),
+                    timeout=3.5,
+                )
             except Exception as exc:
-                logger.warning("OpenAI API invocation failed, falling back: %s", exc)
+                logger.warning("OpenAI API invocation failed/timed out, using fast fallback: %s", exc)
 
-        # 3. Fallback heuristic engine if no keys configured or external call fails
         logger.info("Using smart local heuristic fallback for LLM response generation.")
         return self._heuristic_fallback(system_prompt, user_prompt)
 
     async def _call_gemini_rest(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        """Calls Google Gemini v1beta generateContent endpoint with JSON response mime type."""
         model = self.model_name if "gemini" in self.model_name else "gemini-2.5-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.gemini_api_key}"
 
@@ -92,7 +211,7 @@ class LLMClient:
             },
         }
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=3.5) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -105,7 +224,6 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
     ) -> Dict[str, Any]:
-        """Calls OpenAI or compatible endpoint enforcing JSON format."""
         model = self.model_name if not self.model_name.startswith("gemini") else "gpt-4o-mini"
         response = await client.chat.completions.create(
             model=model,
@@ -120,108 +238,143 @@ class LLMClient:
         return json.loads(content)
 
     def _heuristic_fallback(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        """Deterministic heuristic fallback when external LLM API is rate-limited or unavailable."""
-        # Stage A: Intent Parsing Fallback
+        """Smart, diverse, score-and-relevance weighted fallback that avoids repeating 'Monster'."""
         if "Niyet Analizi" in system_prompt or "Intent Parsing" in system_prompt:
-            p_lower = user_prompt.lower()
-            media_type = "ALL"
-            if "[anime]" in p_lower or "anime" in p_lower:
-                media_type = "ANIME"
-            elif "[series]" in p_lower or "dizi" in p_lower or "series" in p_lower:
-                media_type = "SERIES"
-            elif "[movie]" in p_lower or "film" in p_lower or "movie" in p_lower or "sinema" in p_lower:
-                media_type = "MOVIE"
+            return RecommendationEngine._fast_local_intent_parser(user_prompt).model_dump()
 
-            # Clean prefixes like [ANIME], [MOVIE], etc.
-            clean_text = re.sub(r"\[(ALL|ANIME|MOVIE|SERIES)\]", "", user_prompt, flags=re.IGNORECASE).strip()
-            clean_lower = clean_text.lower()
+        # Parse candidates block from Stage B prompt
+        blocks = re.split(r"\n(?=\d+\.\s*ID:)", user_prompt)
+        candidates_info: List[Dict[str, Any]] = []
+        for block in blocks:
+            m_head = re.search(
+                r"ID:\s*([^\s|]+)\s*\|\s*Başlık:\s*([^|\(\n]+)(?:\((\d{4}|N/A)\))?\s*\|\s*Kaynak:\s*([A-Z_]+)",
+                block,
+            )
+            if not m_head:
+                m_simple = re.search(r"ID:\s*([A-Za-z0-9_-]+)\s*\|\s*Başlık:\s*([^|\(\n]+)", block)
+                if m_simple:
+                    candidates_info.append({
+                        "id": m_simple.group(1).strip(),
+                        "title": m_simple.group(2).strip(),
+                        "source": "UNKNOWN",
+                        "score": 8.0,
+                        "meta_text": block.lower(),
+                    })
+                continue
 
-            moods = []
-            for m in ["karanlık", "dark", "gerilim", "melankolik", "hüzünlü", "komik", "eğlenceli", "romantik"]:
-                if m in clean_lower:
-                    moods.append(m)
-
-            themes = []
-            for t in ["psikolojik", "cyberpunk", "intikam", "zaman yolculuğu", "bilim kurgu", "distopya", "aksiyon", "macera"]:
-                if t in clean_lower:
-                    themes.append(t)
-
-            excluded = []
-            for e in ["shounen", "klişe", "arkadaşlık gücü", "harem"]:
-                if e in clean_lower:
-                    excluded.append(f"{e} klişesi")
-
-            ref_titles = []
-            match_like = re.search(r"(\w+)\s+(gibi|tarzı)", clean_text, re.IGNORECASE)
-            if match_like:
-                ref_titles.append(match_like.group(1))
-
-            # Detect direct title search:
-            # If user used command words (izle, bul, seyret) OR user typed a short specific query (<= 5 words) without complex descriptor phrases
-            has_complex_descriptors = bool(len(moods) >= 2 or len(themes) >= 2 or ref_titles or excluded)
-            word_count = len(clean_text.split())
-            is_direct = bool(re.search(r"\b(izle|bul|seyret)\b", clean_lower)) or (not has_complex_descriptors and 1 <= word_count <= 5)
-
-            if is_direct:
-                direct_title = re.sub(r"\b(izle|bul|seyret)\b", "", clean_text, flags=re.IGNORECASE).strip()
-            else:
-                direct_title = None
-
-            return {
-                "is_direct_title_search": is_direct,
-                "direct_title": direct_title,
-                "media_type_filter": media_type,
-                "mood_keywords": moods if moods else (["sürükleyici"] if not is_direct else []),
-                "target_themes": themes if themes else (["derin kurgu"] if not is_direct else []),
-                "excluded_tropes": excluded,
-                "reference_titles": ref_titles,
-            }
-
-        # Stage B: Re-ranking Fallback
-        lines = user_prompt.split("\n")
-        candidates_info = []
-        for line in lines:
-            m = re.search(r"ID:\s*([A-Za-z0-9_-]+)\s*\|\s*Başlık:\s*([^|\(]+)", line)
-            if m:
-                cand_id = m.group(1).strip()
-                cand_title = m.group(2).strip()
-                candidates_info.append((cand_id, cand_title))
+            cid = m_head.group(1).strip()
+            ctitle = m_head.group(2).strip()
+            csource = m_head.group(4).strip()
+            m_score = re.search(r"Puan:\s*([\d\.]+)", block)
+            cscore = float(m_score.group(1)) if m_score else 8.0
+            candidates_info.append({
+                "id": cid,
+                "title": ctitle,
+                "source": csource,
+                "score": cscore,
+                "meta_text": block.lower(),
+            })
 
         prompt_m = re.search(r"KULLANICI İSTEMİ:\s*([^\n]+)", user_prompt)
         prompt_str = prompt_m.group(1).strip() if prompt_m else ""
         clean_prompt = re.sub(r"\[(ALL|ANIME|MOVIE|SERIES)\]", "", prompt_str, flags=re.IGNORECASE).strip()
+        clean_p_lower = clean_prompt.lower()
 
-        # If direct title match exists, put it first
-        if clean_prompt:
-            clean_p_lower = clean_prompt.lower()
-            for idx, (c_id, c_title) in enumerate(candidates_info):
-                if clean_p_lower in c_title.lower() or c_title.lower() in clean_p_lower:
-                    match_item = candidates_info.pop(idx)
-                    candidates_info.insert(0, match_item)
-                    break
+        # Detect if this is a "X gibi..." reference query vs direct title query
+        ref_match = re.search(r"^(.+?)\s+(?:gibi|tarzı|benzeri)\b", clean_prompt, flags=re.IGNORECASE)
+        ref_title_lower = ref_match.group(1).strip().lower() if ref_match else None
+
+        # Extract meaningful query tokens (both Turkish and translated English equivalents)
+        raw_tokens = [
+            w for w in re.findall(r"\w+", clean_p_lower)
+            if len(w) >= 3 and w not in {"gibi", "tarzı", "benzeri", "olan", "içeren", "film", "filmi", "dizi", "dizisi", "anime", "izle", "izlemek", "istiyorum", "bana", "öner"}
+        ]
+        expanded_tokens = set(raw_tokens)
+        for tr_k, en_v in TR_EN_KEYWORD_MAP.items():
+            if tr_k in clean_p_lower:
+                expanded_tokens.update(en_v.lower().split())
+                expanded_tokens.add(tr_k)
+
+        # Shuffle first so ties are broken with fresh variety every time
+        random.shuffle(candidates_info)
+
+        scored_candidates: List[tuple[float, Dict[str, Any]]] = []
+        for cand in candidates_info:
+            c_title_low = cand["title"].lower()
+            meta = cand["meta_text"]
+
+            norm_c = _normalize_title(cand["title"])
+            norm_q = _normalize_title(clean_p_lower)
+
+            # If user asked for "X gibi...", penalize returning X itself so we recommend similar titles
+            if ref_title_lower and (c_title_low == ref_title_lower or ref_title_lower in c_title_low):
+                relevance = -10.0
+            elif not ref_title_lower and norm_q and (norm_c == norm_q or norm_q in norm_c or norm_c in norm_q):
+                # Direct title match gets highest priority
+                relevance = 100.0
+            else:
+                # Keyword overlap score + base rating weight + controlled randomness for fresh discovery
+                overlap = sum(2.5 for tok in expanded_tokens if tok in meta)
+                score_weight = (cand["score"] or 8.0) * 0.4
+                jitter = random.uniform(0.0, 1.8)
+                relevance = overlap + score_weight + jitter
+
+            scored_candidates.append((relevance, cand))
+
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+
+        # Select top 5 with balanced media source diversity if multiple sources are present
+        selected: List[Dict[str, Any]] = []
+        source_counts: Dict[str, int] = {}
+        distinct_sources = {c["source"] for _, c in scored_candidates}
+
+        for rel, cand in scored_candidates:
+            if len(selected) >= 5:
+                break
+            src = cand["source"]
+            # If pool has multiple sources (e.g. ALL filter), cap any single source at 2 during first pass
+            if len(distinct_sources) > 1 and source_counts.get(src, 0) >= 2 and rel < 40.0:
+                continue
+            selected.append(cand)
+            source_counts[src] = source_counts.get(src, 0) + 1
+
+        # Fill remaining slots up to 5 if needed
+        selected_ids = {c["id"] for c in selected}
+        for _, cand in scored_candidates:
+            if len(selected) >= 5:
+                break
+            if cand["id"] not in selected_ids:
+                selected.append(cand)
+                selected_ids.add(cand["id"])
 
         recommendations_list = []
-        for rank, (c_id, c_title) in enumerate(candidates_info[:5], 1):
-            if rank == 1 and clean_prompt and (clean_prompt.lower() in c_title.lower() or c_title.lower() in clean_prompt.lower()):
-                just = f"Doğrudan aradığın '{c_title}', yüksek puanı ve güçlü atmosferiyle listenin 1. sırasındaki yapımdır."
+        for rank, cand in enumerate(selected[:5], 1):
+            c_id = cand["id"]
+            c_title = cand["title"]
+            if rank == 1 and not ref_title_lower and clean_p_lower and clean_p_lower in c_title.lower():
+                just = f"Doğrudan aradığın '{c_title}', yüksek puanı ve güçlü atmosferiyle listenin zirvesinde yer alıyor. Beklentini tam olarak karşılayacak birincil yapımdır."
             elif rank == 1:
-                just = f"Aradığın temayı en dengeli ve sürükleyici şekilde işleyen '{c_title}', zevkine tam oturacak öncelikli bir başyapıttır."
+                just = f"Aradığın atmosferi ve tematik derinliği en çarpıcı şekilde işleyen '{c_title}', zevkine tam oturacak öncelikli bir başyapıttır. Kurgusal temposu seni ilk dakikadan içine çekecek."
             elif rank == 2:
-                just = f"'{c_title}', benzer tonları ve derin kurgusuyla alternatifler arasında öne çıkan çarpıcı bir yapımdır."
+                just = f"'{c_title}', benzer karanlık ve sürükleyici tonlarıyla alternatifler arasında öne çıkan güçlü bir yapımdır. Karakter çatışmaları ve anlatım diliyle unutulmaz bir deneyim sunar."
             elif rank == 3:
-                just = f"Farklı bir anlatım arayanlar için '{c_title}', güçlü karakter dinamikleri ve temposuyla dikkat çeker."
+                just = f"Farklı bir perspektif arayanlar için '{c_title}', özgün dünyası ve yüksek gerilim dozajıyla dikkat çeker. Türün klişelerinden uzak, rafine bir kurguya sahiptir."
             elif rank == 4:
-                just = f"Kurgusal derinliği ve yüksek temposuyla '{c_title}', aradığın hissi tamamlayacak niteliktedir."
+                just = f"Derinlikli senaryosu ve görsel atmosferiyle '{c_title}', aradığın hissi tamamlayacak niteliktedir. İzleme listene mutlaka eklemen gereken etkileyici bir eserdir."
             else:
-                just = f"Türün en özgün eserlerinden biri olan '{c_title}', keşif sepetine eklemen gereken sürpriz bir öneridir."
+                just = f"Türün en özgün örneklerinden biri olan '{c_title}', keşif sepetine zenginlik katacak sürpriz bir öneridir. Güçlü finali ve temposuyla beklentini aşacaktır."
 
             recommendations_list.append({
                 "selected_external_id": c_id,
-                "confidence_score": round(0.98 - (rank - 1) * 0.03, 2),
+                "confidence_score": round(0.97 - (rank - 1) * 0.03, 2),
                 "justification_text": just,
             })
 
-        first_rec = recommendations_list[0] if recommendations_list else {"selected_external_id": "none", "confidence_score": 0.0, "justification_text": "Öneri bulunamadı."}
+        first_rec = (
+            recommendations_list[0]
+            if recommendations_list
+            else {"selected_external_id": "none", "confidence_score": 0.0, "justification_text": "Öneri bulunamadı."}
+        )
         return {
             "recommendations": recommendations_list,
             "selected_external_id": first_rec["selected_external_id"],
@@ -230,30 +383,10 @@ class LLMClient:
         }
 
 
-# Quick keyword mapping from Turkish search intents to international API keywords
-TR_EN_KEYWORD_MAP: Dict[str, str] = {
-    "karanlık": "dark",
-    "psikolojik": "psychological",
-    "gerilim": "thriller",
-    "korku": "horror",
-    "bilim kurgu": "sci-fi",
-    "distopya": "dystopian",
-    "cyberpunk": "cyberpunk",
-    "intikam": "revenge",
-    "aksiyon": "action",
-    "macera": "adventure",
-    "gizem": "mystery",
-    "dram": "drama",
-    "komedi": "comedy",
-    "romantik": "romance",
-    "fantastik": "fantasy",
-    "zaman yolculuğu": "time travel",
-    "derin kurgu": "psychological thriller",
-}
-
-
 class RecommendationEngine:
-    """Core recommendation pipeline: Intent Parsing -> Candidate Retrieval -> Re-ranking & Justification."""
+    """Single-stage ultra-fast recommendation pipeline:
+    0ms Local Intent Parser -> Parallel Cached Candidate Retrieval -> Re-ranking & Justification.
+    """
 
     def __init__(
         self,
@@ -262,6 +395,127 @@ class RecommendationEngine:
     ) -> None:
         self.llm = llm_client or LLMClient()
         self.aggregator = aggregator_service or MediaAggregatorService()
+
+    @staticmethod
+    def _fast_local_intent_parser(user_prompt: str) -> UserIntentFilter:
+        """0ms local intent parser replacing Stage A LLM network call."""
+        raw = (user_prompt or "").strip()
+        p_lower = raw.lower()
+
+        # 1. Detect explicit prefix tag ([ANIME], [MOVIE], [SERIES], [ALL])
+        prefix_match = re.search(r"\[(ALL|ANIME|MOVIE|SERIES)\]", raw, flags=re.IGNORECASE)
+        media_type = prefix_match.group(1).upper() if prefix_match else "ALL"
+
+        clean_text = re.sub(r"\[(ALL|ANIME|MOVIE|SERIES)\]", "", raw, flags=re.IGNORECASE).strip()
+        clean_lower = clean_text.lower()
+
+        # 2. Extract reference titles ("X gibi", "X tarzı", "X benzeri")
+        ref_titles: List[str] = []
+        match_like = re.search(r"^(.+?)\s+(?:gibi|tarzı|benzeri)\b", clean_text, flags=re.IGNORECASE)
+        if match_like:
+            ref_candidate = match_like.group(1).strip()
+            if ref_candidate:
+                ref_titles.append(ref_candidate)
+
+        # 3. Extract moods, themes, and excluded tropes
+        moods: List[str] = []
+        for m in [
+            "karanlık", "dark", "gerilim", "tekinsiz", "melankolik", "melankoli",
+            "hüzünlü", "komik", "eğlenceli", "romantik", "epik", "sürükleyici",
+        ]:
+            if m in clean_lower:
+                moods.append("melankolik" if m == "melankoli" else m)
+
+        themes: List[str] = []
+        theme_patterns = [
+            ("psikolojik", "psikolojik"),
+            ("cyberpunk", "cyberpunk"),
+            ("siber-punk", "cyberpunk"),
+            ("intikam", "intikam"),
+            ("zaman yolculuğu", "zaman yolculuğu"),
+            ("zaman bükücü", "zaman yolculuğu"),
+            ("bilim kurgu", "bilim kurgu"),
+            ("distopya", "distopya"),
+            ("distopik", "distopya"),
+            ("aksiyon", "aksiyon"),
+            ("macera", "macera"),
+            ("uzay", "uzay"),
+            ("rüya", "rüya"),
+            ("suç", "suç"),
+            ("gizem", "gizem"),
+            ("fantezi", "fantastik"),
+            ("fantastik", "fantastik"),
+            ("ahlaki çöküş", "suç"),
+            ("kimlik buhranı", "psikolojik"),
+            ("twist", "gerilim"),
+            ("animasyon", "animasyon"),
+            ("kahraman", "aksiyon"),
+        ]
+        for pat, norm_theme in theme_patterns:
+            if pat in clean_lower and norm_theme not in themes:
+                themes.append(norm_theme)
+
+        excluded: List[str] = []
+        for e in ["shounen", "klişe", "arkadaşlık gücü", "harem"]:
+            if e in clean_lower:
+                label = f"{e} klişesi" if e == "shounen" else e
+                if label not in excluded:
+                    excluded.append(label)
+
+        # If "karanlık" + ("anime" or "shounen") and no themes yet, infer "psikolojik"
+        if "karanlık" in moods and not themes:
+            themes.append("psikolojik")
+
+        # 4. Strip command verbs to inspect potential direct title
+        command_pattern = r"\b(izlemek\s+istiyorum|izlemek|seyretmek\s+istiyorum|izle|bul|seyret|öner|önerir\s+misin)\b"
+        has_command_verb = bool(re.search(command_pattern, clean_lower))
+        stripped_title = re.sub(command_pattern, "", clean_text, flags=re.IGNORECASE).strip(" .,!?-")
+        stripped_lower = stripped_title.lower()
+
+        # 5. Determine media_type if still ALL
+        norm_stripped = _normalize_title(stripped_title)
+        if media_type == "ALL":
+            if any(w in clean_lower for w in ["anime", "manga", "shounen", "seinen", "isekai"]) or stripped_lower in KNOWN_ANIME_TITLES or norm_stripped in KNOWN_ANIME_TITLES:
+                media_type = "ANIME"
+            elif any(w in clean_lower for w in ["dizi", "dizisi", "series", "sezon", "mini dizi"]) or stripped_lower in KNOWN_SERIES_TITLES or norm_stripped in KNOWN_SERIES_TITLES:
+                media_type = "SERIES"
+            elif any(w in clean_lower for w in ["film", "filmi", "movie", "sinema"]) or stripped_lower in KNOWN_MOVIE_TITLES or norm_stripped in KNOWN_MOVIE_TITLES:
+                media_type = "MOVIE"
+
+        # 6. Determine if direct title search
+        has_descriptors = bool(
+            ref_titles
+            or excluded
+            or "gibi" in clean_lower
+            or "tarzı" in clean_lower
+            or "içermeyen" in clean_lower
+            or len(moods) >= 1
+            or len(themes) >= 1
+        )
+        word_count = len(stripped_title.split())
+        is_known = (
+            stripped_lower in KNOWN_MOVIE_TITLES
+            or stripped_lower in KNOWN_SERIES_TITLES
+            or stripped_lower in KNOWN_ANIME_TITLES
+            or norm_stripped in KNOWN_MOVIE_TITLES
+            or norm_stripped in KNOWN_SERIES_TITLES
+            or norm_stripped in KNOWN_ANIME_TITLES
+        )
+        is_direct = is_known or (has_command_verb and not has_descriptors and 1 <= word_count <= 6) or (
+            not has_descriptors and 1 <= word_count <= 4
+        )
+
+        direct_title = stripped_title if is_direct and stripped_title else None
+
+        return UserIntentFilter(
+            is_direct_title_search=is_direct,
+            direct_title=direct_title,
+            media_type_filter=media_type,
+            mood_keywords=moods if moods else (["sürükleyici"] if not is_direct else []),
+            target_themes=themes if themes else (["derin kurgu"] if not is_direct else []),
+            excluded_tropes=excluded,
+            reference_titles=ref_titles,
+        )
 
     @staticmethod
     def _translate_keywords(keywords: List[str]) -> List[str]:
@@ -276,12 +530,8 @@ class RecommendationEngine:
         return translated
 
     async def parse_intent(self, user_prompt: str) -> UserIntentFilter:
-        """Stage A: Extracts structured intent and search parameters from natural language."""
-        raw_json = await self.llm.generate_json(
-            system_prompt=INTENT_PARSING_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-        )
-        return UserIntentFilter.model_validate(raw_json)
+        """Stage A (0ms Local Intent Parser): Extracts structured intent without LLM latency."""
+        return self._fast_local_intent_parser(user_prompt)
 
     async def get_user_profile(
         self,
@@ -303,17 +553,14 @@ class RecommendationEngine:
         completed_ids: List[str] = []
 
         for user_media, media_item in entries:
-            # COMPLETED: Exclude already watched titles from recommendation pool
             if user_media.status == WatchStatus.COMPLETED:
                 completed_titles.append(media_item.title)
                 completed_ids.append(str(media_item.external_id))
 
-            # Gold List: is_favorite == True or user_score >= 9.0
             if user_media.is_favorite or (user_media.user_score and user_media.user_score >= 9.0):
                 note = f" (Not: {user_media.personal_notes})" if user_media.personal_notes else ""
                 gold_list.append(f"{media_item.title} [{media_item.media_source}]{note}")
 
-            # Red List: status == DROPPED or user_score <= 4.0
             if user_media.status == WatchStatus.DROPPED or (user_media.user_score and user_media.user_score <= 4.0):
                 reason = f" (Neden: {user_media.drop_reason})" if user_media.drop_reason else ""
                 red_list.append(f"{media_item.title} [{media_item.media_source}]{reason}")
@@ -336,77 +583,66 @@ class RecommendationEngine:
         excluded_titles: Optional[List[str]] = None,
         excluded_ids: Optional[List[str]] = None,
     ) -> List[UnifiedMediaDTO]:
-        """Fetches potential candidates from MediaAggregator and local database matching intent."""
-        # 1. Determine provider routing based on media_type_filter
+        """Fetches a diverse, balanced pool of candidates from MediaAggregator and curated pools."""
         enable_tmdb = intent.media_type_filter in ("ALL", "MOVIE", "SERIES")
         enable_anilist = intent.media_type_filter in ("ALL", "ANIME")
 
-        # Clean prompt by stripping tags like [ANIME], [MOVIE], [SERIES]
         clean_user_prompt = re.sub(r"\[(ALL|ANIME|MOVIE|SERIES)\]", "", user_prompt, flags=re.IGNORECASE).strip()
 
-        # 2. Formulate search query with international API keyword translation
+        # Formulate primary search query
+        trans_themes = self._translate_keywords(intent.target_themes + intent.mood_keywords)
         if intent.is_direct_title_search and intent.direct_title:
             search_query = intent.direct_title
+        elif trans_themes:
+            search_query = trans_themes[0]
         elif intent.reference_titles:
-            ref = intent.reference_titles[0]
-            trans_themes = self._translate_keywords(intent.target_themes)
-            search_query = f"{ref} {' '.join(trans_themes)}"
-        elif clean_user_prompt and len(clean_user_prompt.split()) <= 4:
-            search_query = clean_user_prompt
-        elif intent.target_themes or intent.mood_keywords:
-            raw_keywords = intent.target_themes + intent.mood_keywords
-            trans_keywords = self._translate_keywords(raw_keywords)
-            search_query = trans_keywords[0] if trans_keywords else clean_user_prompt
+            search_query = intent.reference_titles[0]
         else:
             search_query = clean_user_prompt or user_prompt
 
-        # 3. Query MediaAggregator
         candidates = await self.aggregator.search_all(
             query=search_query,
             enable_tmdb=enable_tmdb,
             enable_anilist=enable_anilist,
-            per_source_limit=limit,
+            per_source_limit=max(limit, 12),
         )
 
-        # Fallback if first search returned no candidates
-        if not candidates and (intent.target_themes or intent.mood_keywords):
-            for fallback_kw in self._translate_keywords(intent.mood_keywords + intent.target_themes):
-                if fallback_kw == search_query:
-                    continue
-                candidates = await self.aggregator.search_all(
-                    query=fallback_kw,
-                    enable_tmdb=enable_tmdb,
-                    enable_anilist=enable_anilist,
-                    per_source_limit=limit,
-                )
-                if candidates:
-                    break
-
-        # 4. Only augment with local database records if external candidate search yielded nothing
-        if not candidates and session:
+        # Supplement with popular/curated masterpieces so the pool is always rich & diverse
+        # (and never stuck on a single title like 'Monster')
+        if len(candidates) < 10 or not intent.is_direct_title_search:
             try:
-                db_stmt = select(MediaItem).order_by(desc(MediaItem.site_score)).limit(10)
-                db_res = await session.execute(db_stmt)
-                db_items = db_res.scalars().all()
-                for d in db_items:
-                    dto = UnifiedMediaDTO(
-                        external_id=d.external_id,
-                        source=d.media_source.value,
-                        title=d.title,
-                        original_title=d.original_title,
-                        release_year=d.release_year,
-                        poster_url=d.poster_url,
-                        synopsis=d.synopsis,
-                        genres=d.genres or [],
-                        themes=d.themes or [],
-                        base_score=d.site_score or d.imdb_score or 0.0,
-                        vote_count=d.site_vote_count,
-                    )
-                    candidates.append(dto)
+                supplement = await self.aggregator.get_random_masterpieces(
+                    limit=20,
+                    media_type=intent.media_type_filter,
+                )
+                seen_keys = {(c.source, str(c.external_id)) for c in candidates}
+                for item in supplement:
+                    key = (item.source, str(item.external_id))
+                    if key not in seen_keys:
+                        candidates.append(item)
+                        seen_keys.add(key)
             except Exception as exc:
-                logger.debug("Local database candidate fetch skipped: %s", exc)
+                logger.debug("Supplement candidate fetch skipped: %s", exc)
 
-        # 5. Filter out titles explicitly completed or dropped by user
+        # Enforce media_type filter before scoring/balancing
+        if intent.media_type_filter == "MOVIE":
+            candidates = [c for c in candidates if c.source == "TMDB_MOVIE"]
+        elif intent.media_type_filter == "SERIES":
+            candidates = [c for c in candidates if c.source == "TMDB_SERIES"]
+        elif intent.media_type_filter == "ANIME":
+            candidates = [c for c in candidates if c.source == "ANILIST"]
+
+        # Exclude reference title itself when user asks "X gibi..."
+        if intent.reference_titles:
+            ref_lows = {r.lower().strip() for r in intent.reference_titles if r.strip()}
+            filtered_ref = [
+                c for c in candidates
+                if c.title.lower().strip() not in ref_lows
+            ]
+            if len(filtered_ref) >= 5:
+                candidates = filtered_ref
+
+        # Filter out titles explicitly completed or dropped by user
         if excluded_ids:
             excluded_id_set = {str(eid) for eid in excluded_ids}
             candidates = [c for c in candidates if str(c.external_id) not in excluded_id_set]
@@ -419,7 +655,47 @@ class RecommendationEngine:
             red_lower = {r.lower() for r in red_list_titles}
             candidates = [c for c in candidates if not any(c.title.lower() in r for r in red_lower)]
 
-        return candidates[:limit]
+        # Score & shuffle candidates by query relevance + rating + randomness so results are fresh & relevant
+        query_terms = set(
+            self._translate_keywords(intent.target_themes + intent.mood_keywords)
+            + [w.lower() for w in re.findall(r"\w+", clean_user_prompt) if len(w) >= 3]
+        )
+
+        random.shuffle(candidates)
+
+        def _candidate_priority(c: UnifiedMediaDTO) -> float:
+            haystack = " ".join(
+                [c.title, c.synopsis or ""] + (c.genres or []) + (c.themes or [])
+            ).lower()
+            if intent.is_direct_title_search and intent.direct_title:
+                dt = intent.direct_title.lower()
+                if c.title.lower() == dt:
+                    return 100.0
+                if dt in c.title.lower():
+                    return 50.0
+            kw_hits = sum(2.0 for term in query_terms if term in haystack)
+            score_bonus = (c.base_score or 7.5) * 0.35
+            return kw_hits + score_bonus + random.uniform(0.0, 1.2)
+
+        candidates.sort(key=_candidate_priority, reverse=True)
+
+        # If ALL media types are enabled, interleave Movie, Series, and Anime for balanced variety
+        if intent.media_type_filter == "ALL" and not intent.is_direct_title_search:
+            movies = [c for c in candidates if c.source == "TMDB_MOVIE"]
+            series = [c for c in candidates if c.source == "TMDB_SERIES"]
+            animes = [c for c in candidates if c.source == "ANILIST"]
+            balanced: List[UnifiedMediaDTO] = []
+            max_b = max(len(movies), len(series), len(animes), 1)
+            for i in range(max_b):
+                if i < len(movies):
+                    balanced.append(movies[i])
+                if i < len(series):
+                    balanced.append(series[i])
+                if i < len(animes):
+                    balanced.append(animes[i])
+            candidates = balanced
+
+        return candidates[: max(limit, 15)]
 
     async def rerank_and_justify(
         self,
@@ -429,7 +705,7 @@ class RecommendationEngine:
         user_profile: UserLibraryProfile,
         media_type: Optional[str] = None,
     ) -> RecommendationResult:
-        """Stage B: Calls LLM to evaluate candidates against user profile and output 'Neden Bu?' justification."""
+        """Evaluates candidates against user profile and outputs 'Neden Bu?' justifications."""
         if not candidates:
             return RecommendationResult(
                 selected_external_id="none",
@@ -437,13 +713,12 @@ class RecommendationEngine:
                 justification_text="Aramanıza ve zevkinize uygun kriterlerde bir yapım bulunamadı.",
             )
 
-        # Construct candidate summaries for the prompt
         cand_summaries: List[str] = []
         for idx, c in enumerate(candidates, 1):
             cand_summaries.append(
                 f"{idx}. ID: {c.external_id} | Başlık: {c.title} ({c.release_year or 'N/A'}) | Kaynak: {c.source}\n"
                 f"   Türler: {', '.join(c.genres)} | Temalar: {', '.join(c.themes)}\n"
-                f"   Puan: {c.base_score} | Özet: {c.synopsis[:200]}..."
+                f"   Puan: {c.base_score} | Özet: {(c.synopsis or '')[:200]}..."
             )
 
         candidates_block = "\n\n".join(cand_summaries)
@@ -497,11 +772,10 @@ class RecommendationEngine:
         limit: int = 10,
         media_type: Optional[str] = None,
     ) -> RecommendationResponse:
-        """Executes the full two-stage AI recommendation pipeline."""
-        # Stage A: Intent Parsing
-        intent = await self.parse_intent(prompt)
+        """Executes the single-stage AI recommendation pipeline with 0ms local intent parsing."""
+        # Stage A: 0ms Local Intent Parsing (No LLM network call!)
+        intent = self._fast_local_intent_parser(prompt)
 
-        # Enforce media_type filter if explicitly passed
         if media_type:
             mt_norm = media_type.upper().strip()
             if mt_norm in ("MOVIE", "FILM"):
@@ -513,9 +787,8 @@ class RecommendationEngine:
             elif mt_norm in ("ALL", "HEPSI", "TUMU"):
                 intent.media_type_filter = "ALL"
 
-        logger.info("Parsed user intent (media_type_filter=%s): %s", intent.media_type_filter, intent.model_dump())
+        logger.info("Fast local intent parsed (media_type_filter=%s): %s", intent.media_type_filter, intent.model_dump())
 
-        # Load user taste profile if user_id & DB session available (fault tolerant)
         user_profile = UserLibraryProfile()
         if user_id and session:
             try:
@@ -523,36 +796,28 @@ class RecommendationEngine:
             except Exception as e:
                 logger.warning("Could not load user library profile from database: %s", e)
 
-        # Retrieve candidates (strictly excluding COMPLETED titles/IDs)
         candidates = await self.fetch_candidates(
             intent=intent,
             user_prompt=prompt,
-            limit=limit,
+            limit=max(limit, 15),
             session=session,
             red_list_titles=user_profile.red_list,
             excluded_titles=user_profile.completed_titles,
             excluded_ids=user_profile.completed_ids,
         )
 
-        # Enforce strict type isolation on candidates if filtered
-        if intent.media_type_filter == "MOVIE":
-            candidates = [c for c in candidates if c.source == "TMDB_MOVIE"]
-        elif intent.media_type_filter == "SERIES":
-            candidates = [c for c in candidates if c.source == "TMDB_SERIES"]
-        elif intent.media_type_filter == "ANIME":
-            candidates = [c for c in candidates if c.source == "ANILIST"]
-
-        # Direct title exact match check:
         clean_user_prompt = re.sub(r"\[(ALL|ANIME|MOVIE|SERIES)\]", "", prompt, flags=re.IGNORECASE).strip()
         search_target = (intent.direct_title or clean_user_prompt).lower().strip()
 
         best_match = None
-        if intent.is_direct_title_search and candidates:
-            # 1. Exact match
-            best_match = next((c for c in candidates if c.title.lower().strip() == search_target), None)
-            if not best_match:
-                # 2. Substring match
-                best_match = next((c for c in candidates if search_target in c.title.lower() or c.title.lower() in search_target), None)
+        norm_target = _normalize_title(search_target)
+        if candidates and (intent.is_direct_title_search or norm_target):
+            best_match = next((c for c in candidates if _normalize_title(c.title) == norm_target), None)
+            if not best_match and len(norm_target) >= 3:
+                best_match = next(
+                    (c for c in candidates if norm_target in _normalize_title(c.title) or _normalize_title(c.title) in norm_target),
+                    None,
+                )
 
         if best_match:
             remaining_cands = [c for c in candidates if str(c.external_id) != str(best_match.external_id)]
@@ -560,7 +825,7 @@ class RecommendationEngine:
         else:
             eval_candidates = candidates
 
-        # Stage B: Re-ranking and Justification
+        # Stage B: Re-ranking and Justification (Single LLM call or fast heuristic fallback)
         ranking_result = await self.rerank_and_justify(
             user_prompt=prompt,
             intent=intent,
@@ -583,7 +848,6 @@ class RecommendationEngine:
             )
             seen_ids.add(str(best_match.external_id))
 
-        # Add items selected by LLM re-ranking
         for rec in ranking_result.recommendations:
             rec_id = str(rec.selected_external_id)
             if rec_id in candidate_map and rec_id not in seen_ids:
@@ -602,7 +866,6 @@ class RecommendationEngine:
                 if len(final_recommendations) >= 5:
                     break
 
-        # Fallback / fill to ensure exactly 5 items if more candidates are available
         for c in eval_candidates:
             if len(final_recommendations) >= 5:
                 break
@@ -645,12 +908,7 @@ class RecommendationEngine:
         session: Optional[AsyncSession] = None,
         media_type: Optional[str] = None,
     ) -> RecommendationResponse:
-        """Provides a serendipitous 'Şansıma Güveniyorum' high-scoring recommendation,
-
-        filtering out titles already present in the user's library and selecting randomly
-        from paginated top-rated pools matching the optional media_type.
-        """
-        import random
+        """Provides a serendipitous 'Şansıma Güveniyorum' high-scoring recommendation."""
         selected_dto: Optional[UnifiedMediaDTO] = None
         user_saved_titles: set[str] = set()
 
@@ -680,7 +938,6 @@ class RecommendationEngine:
 
         if session:
             try:
-                # 1. Query random high-scoring item from database (>= 7.8)
                 stmt = select(MediaItem).where(
                     func.coalesce(MediaItem.site_score, MediaItem.imdb_score, 0.0) >= 7.8
                 )
@@ -715,13 +972,11 @@ class RecommendationEngine:
             except Exception as exc:
                 logger.warning("Database query in get_random_masterpiece skipped due to error: %s", exc)
 
-        # 2. If not found in DB, pull randomized high-rated masterpieces from external pool
         if not selected_dto:
             pool = await self.aggregator.get_random_masterpieces(limit=25, media_type=target_filter)
-            # Filter out any title user already has in library
             valid_pool = [
                 m for m in pool
-                if m.title.lower() not in user_saved_titles and m.external_id not in user_saved_titles
+                if m.title.lower() not in user_saved_titles and str(m.external_id) not in user_saved_titles
             ]
             if valid_pool:
                 selected_dto = random.choice(valid_pool)
@@ -730,29 +985,29 @@ class RecommendationEngine:
             else:
                 if target_filter == "MOVIE":
                     selected_dto = UnifiedMediaDTO(
-                        external_id="157336",
+                        external_id="tt0816692",
                         source="TMDB_MOVIE",
                         title="Interstellar",
                         release_year=2014,
-                        poster_url="https://image.tmdb.org/t/p/w500/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg",
-                        synopsis="The adventures of a group of explorers who make use of a newly discovered wormhole...",
+                        poster_url="https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_SX500.jpg",
+                        synopsis="When Earth becomes uninhabitable in the future, a farmer and ex-NASA pilot is tasked to pilot a spacecraft to find a new planet for humans.",
                         genres=["Adventure", "Drama", "Science Fiction"],
                         themes=["space exploration", "time dilation"],
                         base_score=8.7,
-                        vote_count=35000,
+                        vote_count=2100000,
                     )
                 elif target_filter == "SERIES":
                     selected_dto = UnifiedMediaDTO(
-                        external_id="1396",
+                        external_id="169",
                         source="TMDB_SERIES",
                         title="Breaking Bad",
                         release_year=2008,
-                        poster_url="https://image.tmdb.org/t/p/w500/ztkUQFLlC19CCMYHW9o1zWhJvUj.jpg",
-                        synopsis="A chemistry teacher diagnosed with inoperable lung cancer turns to manufacturing methamphetamine...",
+                        poster_url="https://static.tvmaze.com/uploads/images/original_untouched/0/2400.jpg",
+                        synopsis="A chemistry teacher diagnosed with inoperable lung cancer turns to manufacturing methamphetamine.",
                         genres=["Drama", "Crime"],
                         themes=["drugs", "moral descent"],
                         base_score=9.5,
-                        vote_count=13000,
+                        vote_count=2100000,
                     )
                 else:
                     selected_dto = UnifiedMediaDTO(
@@ -761,7 +1016,7 @@ class RecommendationEngine:
                         title="Attack on Titan",
                         release_year=2013,
                         poster_url="https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-C6FPmWm59CyP.jpg",
-                        synopsis="Centuries ago mankind was almost slaughtered by titans...",
+                        synopsis="Centuries ago mankind was almost slaughtered by titans.",
                         genres=["Action", "Drama", "Fantasy"],
                         themes=["post-apocalyptic", "military"],
                         base_score=8.5,

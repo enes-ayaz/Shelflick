@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.models.media import MediaSource
@@ -16,6 +16,11 @@ class MediaItemBase(BaseModel):
     synopsis: str = Field(..., description="Plot synopsis or description")
     genres: List[str] = Field(default_factory=list, description="List of genre tags")
     themes: List[str] = Field(default_factory=list, description="List of theme/mood tags")
+    runtime: Optional[int] = Field(default=None, description="Runtime in minutes")
+    total_episodes: Optional[int] = Field(default=1, description="Total episode count")
+    total_seasons: Optional[int] = Field(default=None, description="Total seasons count")
+    airing_status: Optional[str] = Field(default=None, description="Airing status")
+    next_airing_info: Optional[Any] = Field(default=None, description="Next airing episode/season info")
 
 
 class MediaItemCreate(MediaItemBase):
@@ -35,6 +40,11 @@ class MediaItemUpdate(BaseModel):
     themes: Optional[List[str]] = None
     imdb_score: Optional[float] = Field(None, ge=0.0, le=10.0)
     imdb_vote_count: Optional[int] = Field(None, ge=0)
+    runtime: Optional[int] = None
+    total_episodes: Optional[int] = None
+    total_seasons: Optional[int] = None
+    airing_status: Optional[str] = None
+    next_airing_info: Optional[Any] = None
 
 
 class MediaItemResponse(MediaItemBase):

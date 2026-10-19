@@ -14,6 +14,9 @@ import {
   XCircle,
   MessageSquare,
   AlertTriangle,
+  Plus,
+  Minus,
+  Tv,
 } from "lucide-react";
 import { LibraryItemDTO, WatchStatus, UnifiedMediaDTO } from "@/types";
 import { addToLibrary, deleteLibraryItem, formatPosterUrl, DEMO_USER_ID } from "@/services/api";
@@ -69,8 +72,12 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
   const [userScore, setUserScore] = useState<number>(8.0);
   const [notes, setNotes] = useState("");
   const [dropReason, setDropReason] = useState("");
+  const [watchedEpisodes, setWatchedEpisodes] = useState<number>(0);
+  const [watchedSeasons, setWatchedSeasons] = useState<number>(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const isEpisodic = item ? item.source === "ANILIST" || item.source === "TMDB_SERIES" : false;
 
   // Sync internal state when item changes
   useEffect(() => {
@@ -80,12 +87,32 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
       setUserScore(item.user_score || item.base_score || 7.5);
       setNotes(item.personal_notes || "");
       setDropReason(item.drop_reason || "");
+      setWatchedEpisodes(item.watched_episodes || (item.status === "COMPLETED" ? (item.total_episodes || 1) : 0));
+      setWatchedSeasons(item.watched_seasons || (item.total_seasons || 0));
     }
   }, [item]);
 
   if (!isOpen || !item) return null;
 
   const currentUserId = user?.id || DEMO_USER_ID;
+
+  const handleStatusChange = (newStatus: WatchStatus) => {
+    setStatus(newStatus);
+    if (newStatus === "DROPPED") {
+      playThud();
+    }
+    if (newStatus === "COMPLETED") {
+      if (isEpisodic) {
+        const fullEps = item.total_episodes || 12;
+        setWatchedEpisodes(fullEps);
+        if (item.total_seasons) {
+          setWatchedSeasons(item.total_seasons);
+        }
+      } else {
+        setWatchedEpisodes(1);
+      }
+    }
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -97,11 +124,16 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
         original_title: item.original_title,
         release_year: item.release_year,
         poster_url: item.poster_url,
-        synopsis: "",
+        synopsis: item.synopsis || "",
         genres: item.genres,
         themes: item.themes,
         base_score: item.base_score,
         vote_count: 0,
+        runtime: item.runtime,
+        total_episodes: item.total_episodes,
+        total_seasons: item.total_seasons,
+        airing_status: item.airing_status,
+        next_airing_info: item.next_airing_info,
       };
 
       const updated = await addToLibrary({
@@ -112,6 +144,8 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
         user_score: userScore,
         personal_notes: notes.trim() || undefined,
         drop_reason: status === "DROPPED" ? dropReason.trim() || "Zaman kaybı / Beklentiyi karşılamadı" : undefined,
+        watched_episodes: isEpisodic ? watchedEpisodes : (status === "COMPLETED" ? 1 : 0),
+        watched_seasons: isEpisodic ? watchedSeasons : undefined,
       });
 
       if (updated) {
@@ -245,6 +279,16 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
               </div>
             </div>
 
+            {/* Synopsis Overview if available */}
+            {item.synopsis && (
+              <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 text-xs text-neutral-300 leading-relaxed max-h-32 overflow-y-auto custom-scrollbar">
+                <span className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider block mb-1">
+                  Özet
+                </span>
+                <p>{item.synopsis}</p>
+              </div>
+            )}
+
             {/* 2. Rating Score (1.0 to 10.0) */}
             <div className="space-y-2 p-4 rounded-2xl bg-white/[0.03] border border-white/10">
               <div className="flex items-center justify-between">
@@ -286,12 +330,7 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
                     <button
                       key={opt.id}
                       type="button"
-                      onClick={() => {
-                        setStatus(opt.id);
-                        if (opt.id === "DROPPED") {
-                          playThud();
-                        }
-                      }}
+                      onClick={() => handleStatusChange(opt.id)}
                       className={`flex items-center gap-2.5 p-3 rounded-2xl border text-xs font-semibold transition-all cursor-pointer text-left ${
                         isSelected
                           ? `${opt.color} ring-1 ring-white/20 shadow-md`
@@ -305,6 +344,111 @@ export const BoxDetailModal: React.FC<BoxDetailModalProps> = ({
                 })}
               </div>
             </div>
+
+            {/* 3.1 Episode Progress (for Series / Anime) or Runtime Info (for Movies) */}
+            {isEpisodic ? (
+              <div className="space-y-3 p-4 rounded-2xl bg-white/[0.03] border border-white/10">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
+                    <Tv className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Bölüm İlerlemesi</span>
+                  </label>
+                  <div className="flex items-baseline gap-1 text-xs">
+                    <span className="font-bold text-white text-sm">{watchedEpisodes}</span>
+                    <span className="text-neutral-400">/ {item.total_episodes || "?"} Bölüm</span>
+                    {item.runtime && (
+                      <span className="text-neutral-400 ml-1 text-[11px]">({item.runtime} dk/bölüm)</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Counter Controls */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWatchedEpisodes((prev) => Math.max(0, prev - 1))}
+                    disabled={watchedEpisodes <= 0}
+                    className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white flex items-center justify-center transition-colors disabled:opacity-30 cursor-pointer"
+                    title="1 Bölüm Azalt"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={item.total_episodes || 9999}
+                      value={watchedEpisodes}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setWatchedEpisodes(isNaN(val) ? 0 : Math.max(0, val));
+                      }}
+                      className="w-full text-center py-2 px-3 rounded-xl bg-black/40 border border-white/10 text-sm font-bold text-white focus:outline-none focus:border-indigo-500/50"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = watchedEpisodes + 1;
+                      const max = item.total_episodes || 9999;
+                      setWatchedEpisodes(Math.min(max, next));
+                    }}
+                    disabled={item.total_episodes ? watchedEpisodes >= item.total_episodes : false}
+                    className="w-9 h-9 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/30 text-indigo-200 flex items-center justify-center transition-colors disabled:opacity-30 cursor-pointer"
+                    title="1 Bölüm İlerlet"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+
+                  {item.total_episodes && item.total_episodes > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWatchedEpisodes(item.total_episodes || 1);
+                        setStatus("COMPLETED");
+                      }}
+                      className="px-2.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+                    >
+                      Tümünü Bitir
+                    </button>
+                  )}
+                </div>
+
+                {/* Visual Progress Bar */}
+                {item.total_episodes && item.total_episodes > 0 && (
+                  <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
+                    <motion.div
+                      className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 rounded-full"
+                      initial={false}
+                      animate={{
+                        width: `${Math.min(100, Math.max(0, (watchedEpisodes / item.total_episodes) * 100))}%`,
+                      }}
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  </div>
+                )}
+
+                {/* Airing / Season Radar Badge if applicable */}
+                {item.airing_status && (
+                  <div className="flex items-center justify-between text-[11px] text-neutral-400 pt-1 border-t border-white/5">
+                    <span>Yayın Durumu:</span>
+                    <span className="text-neutral-300 font-medium">{item.airing_status}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 text-xs">
+                <div className="flex items-center gap-2 text-neutral-300">
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  <span>Film Süresi:</span>
+                </div>
+                <span className="font-bold text-white">
+                  {item.runtime ? `${item.runtime} dakika` : "120 dakika (tahmini)"}
+                </span>
+              </div>
+            )}
 
             {/* 4. Drop Reason (shown if status is DROPPED) */}
             <AnimatePresence>

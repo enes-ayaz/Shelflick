@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.media import MediaSource
@@ -67,6 +67,30 @@ class UnifiedMediaDTO(BaseModel):
         ge=0,
         description="Total votes or popularity metric count",
         examples=[24500],
+    )
+    runtime: Optional[int] = Field(
+        default=None,
+        description="Runtime in minutes (total for movies, average per episode for series/anime)",
+        examples=[136],
+    )
+    total_episodes: Optional[int] = Field(
+        default=1,
+        description="Total episode count (1 for movies)",
+        examples=[24],
+    )
+    total_seasons: Optional[int] = Field(
+        default=None,
+        description="Total seasons count for TV series",
+        examples=[4],
+    )
+    airing_status: Optional[str] = Field(
+        default=None,
+        description="Airing status (e.g., 'Ended', 'Returning Series', 'FINISHED', 'RELEASING')",
+        examples=["Ended"],
+    )
+    next_airing_info: Optional[Any] = Field(
+        default=None,
+        description="Upcoming episode or season schedule information",
     )
 
     model_config = ConfigDict(

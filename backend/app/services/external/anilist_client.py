@@ -47,6 +47,13 @@ query SearchAnime($search: String, $page: Int, $perPage: Int) {
       }
       averageScore
       popularity
+      duration
+      episodes
+      status
+      nextAiringEpisode {
+        airingAt
+        episode
+      }
     }
   }
 }
@@ -79,6 +86,13 @@ query GetAnimeDetails($id: Int) {
     }
     averageScore
     popularity
+    duration
+    episodes
+    status
+    nextAiringEpisode {
+      airingAt
+      episode
+    }
   }
 }
 """
@@ -117,6 +131,13 @@ query GetPopularAnime($page: Int, $perPage: Int) {
       }
       averageScore
       popularity
+      duration
+      episodes
+      status
+      nextAiringEpisode {
+        airingAt
+        episode
+      }
     }
   }
 }
@@ -197,6 +218,13 @@ class AniListClient(BaseAsyncClient):
         base_score = round(float(raw_score) / 10.0, 2) if raw_score is not None else 0.0
         vote_count = int(media.get("popularity") or 0)
 
+        # Watch time and radar fields
+        runtime = media.get("duration")
+        raw_episodes = media.get("episodes")
+        total_episodes = raw_episodes if (raw_episodes is not None and raw_episodes > 0) else 1
+        airing_status = media.get("status")
+        next_airing_info = media.get("nextAiringEpisode") if isinstance(media.get("nextAiringEpisode"), dict) else None
+
         return UnifiedMediaDTO(
             external_id=str(media["id"]),
             source="ANILIST",
@@ -209,6 +237,11 @@ class AniListClient(BaseAsyncClient):
             themes=themes,
             base_score=base_score,
             vote_count=vote_count,
+            runtime=runtime,
+            total_episodes=total_episodes,
+            total_seasons=1,
+            airing_status=airing_status,
+            next_airing_info=next_airing_info,
         )
 
     async def search_anime(self, query: str, page: int = 1, per_page: int = 20) -> List[UnifiedMediaDTO]:

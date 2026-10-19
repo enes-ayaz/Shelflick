@@ -23,6 +23,7 @@ interface OmnibarProps {
   onSelectLiveResult?: (item: LiveSearchResultItem) => void;
   isLoading?: boolean;
   compact?: boolean;
+  externalQuery?: string;
 }
 
 const FILTERS: { label: string; value: MediaTypeFilter; icon: React.ReactNode }[] = [
@@ -38,9 +39,16 @@ export const Omnibar: React.FC<OmnibarProps> = ({
   onSelectLiveResult,
   isLoading = false,
   compact = false,
+  externalQuery,
 }) => {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(externalQuery || "");
   const [activeFilter, setActiveFilter] = useState<MediaTypeFilter>("ALL");
+
+  useEffect(() => {
+    if (externalQuery !== undefined) {
+      setQuery(externalQuery);
+    }
+  }, [externalQuery]);
 
   // Live autocomplete state
   const [liveResults, setLiveResults] = useState<LiveSearchResultItem[]>([]);

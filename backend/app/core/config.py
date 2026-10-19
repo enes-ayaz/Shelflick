@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     TMDB_ACCESS_TOKEN: Optional[str] = Field(default=None, description="TMDB API v4 Read Access Token (Bearer)")
     TMDB_BASE_URL: str = Field(default="https://api.themoviedb.org/3", description="TMDB API v3 Base URL")
     TMDB_IMAGE_BASE_URL: str = Field(default="https://image.tmdb.org/t/p/w500", description="TMDB Poster CDN Base URL")
-    IMAGE_PROXY_BASE_URL: Optional[str] = Field(
-        default=None,
-        description="Image proxy base url (defaults to relative or dynamic)",
+    IMAGE_PROXY_BASE_URL: str = Field(
+        default="http://localhost:8000/api/v1/proxy/image",
+        description="Local image proxy endpoint to bypass DNS sinkholing",
     )
     ANILIST_GRAPHQL_URL: str = Field(default="https://graphql.anilist.co", description="AniList GraphQL Endpoint")
 
@@ -55,34 +55,6 @@ class Settings(BaseSettings):
         default=None,
         description="Google OAuth2 Client ID for validating Google credentials",
     )
-
-    # CORS & Web Origins Configuration
-    FRONTEND_URL: Optional[str] = Field(
-        default=None,
-        description="Public URL of the deployed frontend (e.g. https://shelflick.vercel.app)",
-    )
-    ALLOWED_ORIGINS: list[str] = Field(
-        default=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
-        ],
-        description="List of allowed CORS origins",
-    )
-
-    @property
-    def cors_origins(self) -> list[str]:
-        """Collects all allowed CORS origins from localhost defaults, ALLOWED_ORIGINS, and FRONTEND_URL."""
-        origins = set(self.ALLOWED_ORIGINS)
-        origins.add("https://shelflick.com")
-        origins.add("https://www.shelflick.com")
-        if self.FRONTEND_URL:
-            for url in self.FRONTEND_URL.replace('"', '').replace("'", "").split(","):
-                cleaned = url.strip().rstrip("/")
-                if cleaned:
-                    origins.add(cleaned)
-        return list(origins)
 
     # Database Connection Pool Settings
     DB_POOL_SIZE: int = Field(default=10, description="Database connection pool size")

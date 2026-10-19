@@ -12,6 +12,7 @@ import {
   fetchRecommendation,
   fetchLibraryItems,
   addToLibrary,
+  deleteLibraryItem,
   DEMO_USER_ID,
 } from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
@@ -36,6 +37,7 @@ export default function Home() {
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "info" | "error" } | null>(null);
+  const [activeQuery, setActiveQuery] = useState("");
 
   // Library & Shelf State
   const [libraryItems, setLibraryItems] = useState<LibraryItemDTO[]>([]);
@@ -66,6 +68,7 @@ export default function Home() {
   const handleSearch = async (query: string, filter: MediaTypeFilter) => {
     setIsLoading(true);
     setRecommendation(null);
+    setActiveQuery(query);
     try {
       const formattedPrompt = filter !== "ALL" ? `[${filter}] ${query}` : query;
       const res = await fetchRecommendation({
@@ -103,19 +106,33 @@ export default function Home() {
 
   const handleReset = () => {
     setRecommendation(null);
+    setActiveQuery("");
     setIsShelfOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   /** Called when user clicks a poster on the background wall */
-  const handlePosterClick = (query: string, _title: string) => {
-    handleSearch(query, "ALL");
+  const handlePosterClick = (query: string, title?: string) => {
+    const searchTarget = title || query;
+    setActiveQuery(searchTarget);
+    handleSearch(searchTarget, "ALL");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Add to library and update state in real-time
+  // Add to library and update state in real-time with toggle support
   const handleAddToList = async (media: UnifiedMediaDTO) => {
-    const isAlreadyPresent = libraryItems.some((i) => i.external_id === media.external_id);
+    const existing = libraryItems.find((i) => i.external_id === media.external_id);
+    if (existing) {
+      const ok = await deleteLibraryItem(existing.id, user?.id);
+      if (ok) {
+        setLibraryItems((prev) => prev.filter((i) => i.id !== existing.id));
+        showToast(`"${media.title}" Rafından kaldırıldı.`);
+      } else {
+        showToast("Raf güncellenirken bir sorun oluştu.", "error");
+      }
+      return;
+    }
+
     const result = await addToLibrary({
       media,
       status: "PLAN_TO_WATCH",
@@ -134,6 +151,20 @@ export default function Home() {
   };
 
   const handleMarkWatched = async (media: UnifiedMediaDTO) => {
+    const existing = libraryItems.find((i) => i.external_id === media.external_id);
+    if (existing && existing.status === "COMPLETED") {
+      const result = await addToLibrary({
+        media,
+        status: "PLAN_TO_WATCH",
+        user_id: user?.id,
+      });
+      if (result) {
+        setLibraryItems((prev) => prev.map((i) => (i.id === result.id ? result : i)));
+        showToast(`"${media.title}" İzlenecekler listesine alındı.`);
+      }
+      return;
+    }
+
     const result = await addToLibrary({
       media,
       status: "COMPLETED",
@@ -169,7 +200,7 @@ export default function Home() {
           themes: activeWatchingItem.themes,
           base_score: activeWatchingItem.base_score,
           vote_count: 0,
-          synopsis: "",
+          synopsis: activeWatchingItem.synopsis || "",
         },
         status: "WATCHING",
         is_favorite: true,
@@ -190,7 +221,7 @@ export default function Home() {
           themes: activeWatchingItem.themes,
           base_score: activeWatchingItem.base_score,
           vote_count: 0,
-          synopsis: "",
+          synopsis: activeWatchingItem.synopsis || "",
         },
         status: "DROPPED",
         user_id: user?.id,
@@ -320,6 +351,7 @@ export default function Home() {
           onSelectLiveResult={handleSelectLiveResult}
           isLoading={isLoading}
           compact={hasResult}
+          externalQuery={activeQuery}
         />
 
         {/* Suggested Prompt Inspiration Pills (when no result) */}

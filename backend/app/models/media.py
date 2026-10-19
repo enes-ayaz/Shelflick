@@ -1,6 +1,6 @@
 import enum
 import uuid
-from typing import TYPE_CHECKING, List, Optional
+from typing import Any, TYPE_CHECKING, List, Optional
 from sqlalchemy import (
     CheckConstraint,
     Float,
@@ -118,6 +118,33 @@ class MediaItem(Base):
         default=0,
         server_default="0",
         doc="Total community ratings submitted on MediaPulse",
+    )
+    runtime: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        doc="Runtime in minutes (total for movies, average per episode for series/anime)",
+    )
+    total_episodes: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        default=1,
+        server_default="1",
+        doc="Total episodes count (1 for movies)",
+    )
+    total_seasons: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        doc="Total number of seasons for series",
+    )
+    airing_status: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        doc="Airing status (e.g. 'Ended', 'Returning Series', 'FINISHED', 'RELEASING')",
+    )
+    next_airing_info: Mapped[Optional[Any]] = mapped_column(
+        JSON,
+        nullable=True,
+        doc="Information about next airing episode/season",
     )
 
     # Relationships

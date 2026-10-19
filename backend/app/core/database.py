@@ -25,43 +25,60 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_postgres_url(original_url: str) -> str:
-    """Verifies that the PostgreSQL host in the URL is reachable; falls back to WSL IP if needed in local dev."""
-    # In cloud / production environment, strictly honor the configured DATABASE_URL directly from .env
-    if settings.ENVIRONMENT in ("production", "staging"):
-        return original_url
+    """Normalizes PostgreSQL connection string for asyncpg and handles cloud/local hosts."""
+    url = original_url.strip()
 
-    # Check if host in original URL is reachable
-    match = re.search(r"@([^:/]+):(\d+)", original_url)
-    if match:
-        configured_host = match.group(1)
-        port = int(match.group(2))
-        try:
-            with socket.create_connection((configured_host, port), timeout=1.0):
-                return original_url
-        except Exception:
-            pass
+    # Automatically ensure asyncpg driver prefix
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
 
-    # Try known WSL IP
-    for host in ["172.26.7.84", "127.0.0.1", "localhost"]:
-        try:
-            with socket.create_connection((host, 5432), timeout=1.0):
-                return re.sub(r"@[^:/]+:\d+", f"@{host}:5432", original_url)
-        except Exception:
-            pass
+    # Normalize sslmode for asyncpg if present
+    if "sslmode=" in url:
+        url = url.replace("sslmode=require", "ssl=require").replace("sslmode=prefer", "ssl=prefer")
 
-    # Dynamic WSL IP query
+    # If it's a remote cloud database (e.g. Neon, Supabase, Render), use directly
+    match = re.search(r"@([^:/]+)(?::(\d+))?", url)
+    if not match:
+        return url
+
+    configured_host = match.group(1)
+    port = int(match.group(2)) if match.group(2) else 5432
+
+    # Non-local hosts (Cloud DBs like *.neon.tech)
+    if configured_host not in ("127.0.0.1", "localhost"):
+        return url
+
+    # Local connection check
+    try:
+        with socket.create_connection((configured_host, port), timeout=1.0):
+            return url
+    except Exception:
+        pass
+
+    # Try standard loopback addresses if configured host failed
+    for host in ["127.0.0.1", "localhost"]:
+        if host != configured_host:
+            try:
+                with socket.create_connection((host, 5432), timeout=1.0):
+                    return re.sub(r"@[^:/]+(?::\d+)?", f"@{host}:5432", url)
+            except Exception:
+                pass
+
+    # Dynamic WSL IP query fallback (only relevant on local Windows dev)
     try:
         wsl_ip = subprocess.check_output(
             ["wsl", "-d", "Ubuntu", "--", "hostname", "-I"],
             text=True,
-            timeout=4,
+            timeout=3,
         ).strip().split()[0]
         with socket.create_connection((wsl_ip, 5432), timeout=1.0):
-            return re.sub(r"@[^:/]+:\d+", f"@{wsl_ip}:5432", original_url)
+            return re.sub(r"@[^:/]+(?::\d+)?", f"@{wsl_ip}:5432", url)
     except Exception:
         pass
 
-    return original_url
+    return url
 
 
 EFFECTIVE_DATABASE_URL = resolve_postgres_url(settings.DATABASE_URL)

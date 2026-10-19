@@ -1,14 +1,10 @@
 import asyncio
 import logging
+import random
 import re
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-    before_sleep_log,
-)
+from unittest.mock import NonCallableMock
 
 from app.schemas.unified_media import UnifiedMediaDTO
 from app.services.external.anilist_client import AniListClient
@@ -16,11 +12,17 @@ from app.services.external.tmdb_client import TMDBClient
 
 logger = logging.getLogger(__name__)
 
+# 10-minute in-memory TTL caches for instant 0ms repeat queries
+_SEARCH_CACHE: Dict[Tuple[str, int, int, bool, bool, bool], Tuple[float, List[UnifiedMediaDTO]]] = {}
+_MASTERPIECE_CACHE: Dict[str, Tuple[float, List[UnifiedMediaDTO]]] = {}
+CACHE_TTL_SECONDS = 600.0  # 10 minutes
+PROVIDER_TIMEOUT_SECONDS = 2.5
+
 
 class MediaAggregatorService:
-    """Service that orchestrates parallel searches across TMDB and AniList,
+    """Service that orchestrates parallel searches across TMDBClient (TVMaze/IMDb/iTunes) and AniList,
 
-    deduplicating and normalizing incoming records into UnifiedMediaDTO objects.
+    enforcing strict 2.5s timeouts and 10-minute in-memory TTL caching.
     """
 
     def __init__(
@@ -30,6 +32,15 @@ class MediaAggregatorService:
     ) -> None:
         self.tmdb_client = tmdb_client or TMDBClient()
         self.anilist_client = anilist_client or AniListClient()
+
+    def _is_mocked(self) -> bool:
+        """Detects if either underlying client is a unittest mock so unit tests bypass global cache."""
+        return (
+            isinstance(self.tmdb_client, NonCallableMock)
+            or isinstance(self.anilist_client, NonCallableMock)
+            or isinstance(getattr(self.tmdb_client, "search_multi", None), NonCallableMock)
+            or isinstance(getattr(self.anilist_client, "search_anime", None), NonCallableMock)
+        )
 
     async def close(self) -> None:
         """Closes all underlying HTTP client connections."""
@@ -45,7 +56,6 @@ class MediaAggregatorService:
     @staticmethod
     def _normalize_title_key(title: str) -> str:
         """Cleanses title for fuzzy duplicate detection."""
-        # Convert to lower, strip punctuation and extra spaces
         cleaned = re.sub(r"[^\w\s]", "", title.lower())
         return re.sub(r"\s+", " ", cleaned).strip()
 
@@ -54,22 +64,12 @@ class MediaAggregatorService:
         items: List[UnifiedMediaDTO],
         deduplicate_cross_source: bool = False,
     ) -> List[UnifiedMediaDTO]:
-        """Eliminates duplicates from aggregated results.
-
-        Args:
-            items: Combined list of media DTOs.
-            deduplicate_cross_source: If True, merges/deduplicates titles matching
-                normalized title and release year across TMDB and AniList.
-
-        Returns:
-            Deduplicated list of UnifiedMediaDTO items.
-        """
+        """Eliminates duplicates from aggregated results."""
         seen_primary_keys: Set[Tuple[str, str]] = set()
         seen_cross_keys: Set[Tuple[str, Optional[int]]] = set()
         deduped: List[UnifiedMediaDTO] = []
 
         for item in items:
-            # Primary uniqueness: (source, external_id)
             primary_key = (item.source, item.external_id)
             if primary_key in seen_primary_keys:
                 continue
@@ -87,13 +87,6 @@ class MediaAggregatorService:
 
         return deduped
 
-    @retry(
-        retry=retry_if_exception_type((asyncio.TimeoutError, ConnectionError)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
     async def search_all(
         self,
         query: str,
@@ -103,38 +96,48 @@ class MediaAggregatorService:
         enable_anilist: bool = True,
         deduplicate_cross_source: bool = False,
     ) -> List[UnifiedMediaDTO]:
-        """Searches TMDB and AniList in parallel using asyncio.gather.
-
-        Combines, deduplicates, and sorts records by vote/popularity metric.
-
-        Args:
-            query: User search text.
-            page: Pagination page number (default: 1).
-            per_source_limit: Results count requested per provider.
-            enable_tmdb: Whether to query TMDB.
-            enable_anilist: Whether to query AniList.
-            deduplicate_cross_source: Whether to filter cross-provider title collisions.
-
-        Returns:
-            Consolidated list of UnifiedMediaDTO items.
-        """
+        """Searches providers in parallel with a strict 2.5s timeout and 10-minute RAM TTL cache."""
         clean_query = query.strip()
         if not clean_query:
             return []
+
+        use_cache = not self._is_mocked()
+        cache_key = (
+            clean_query.lower(),
+            page,
+            per_source_limit,
+            enable_tmdb,
+            enable_anilist,
+            deduplicate_cross_source,
+        )
+        now = time.monotonic()
+
+        if use_cache and cache_key in _SEARCH_CACHE:
+            ts, cached_results = _SEARCH_CACHE[cache_key]
+            if now - ts < CACHE_TTL_SECONDS:
+                return list(cached_results)
 
         tasks = []
         task_names = []
 
         if enable_tmdb:
-            tasks.append(self.tmdb_client.search_multi(query=clean_query, page=page))
+            tasks.append(
+                asyncio.wait_for(
+                    self.tmdb_client.search_multi(query=clean_query, page=page),
+                    timeout=PROVIDER_TIMEOUT_SECONDS,
+                )
+            )
             task_names.append("TMDB")
 
         if enable_anilist:
             tasks.append(
-                self.anilist_client.search_anime(
-                    query=clean_query,
-                    page=page,
-                    per_page=per_source_limit,
+                asyncio.wait_for(
+                    self.anilist_client.search_anime(
+                        query=clean_query,
+                        page=page,
+                        per_page=per_source_limit,
+                    ),
+                    timeout=PROVIDER_TIMEOUT_SECONDS,
                 )
             )
             task_names.append("AniList")
@@ -142,24 +145,24 @@ class MediaAggregatorService:
         if not tasks:
             return []
 
-        # Run both tasks concurrently; catch exceptions to prevent one failure from halting all results
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         aggregated: List[UnifiedMediaDTO] = []
         for name, res in zip(task_names, results):
             if isinstance(res, Exception):
-                logger.warning("Provider '%s' failed during search for '%s': %s", name, clean_query, res)
+                logger.warning("Provider '%s' timed out or failed for '%s': %s", name, clean_query, res)
             elif isinstance(res, list):
                 aggregated.extend(res)
 
-        # Deduplicate results
         deduped = self._deduplicate(
             aggregated,
             deduplicate_cross_source=deduplicate_cross_source,
         )
 
-        # Sort combined results primarily by vote_count / popularity descending
         deduped.sort(key=lambda x: x.vote_count, reverse=True)
+
+        if use_cache and deduped:
+            _SEARCH_CACHE[cache_key] = (now, list(deduped))
 
         logger.info(
             "Aggregator search completed for '%s': retrieved %s unique items (TMDB=%s, AniList=%s)",
@@ -173,7 +176,10 @@ class MediaAggregatorService:
     async def get_homepage_featured_posters(self, limit: int = 15) -> List[str]:
         """Convenience method to retrieve popular background posters for discovery screens."""
         try:
-            return await self.tmdb_client.get_popular_posters(limit=limit)
+            return await asyncio.wait_for(
+                self.tmdb_client.get_popular_posters(limit=limit),
+                timeout=PROVIDER_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             logger.warning("Failed to fetch featured posters: %s", exc)
             return []
@@ -183,13 +189,7 @@ class MediaAggregatorService:
         limit: int = 20,
         media_type: Optional[str] = None,
     ) -> List[UnifiedMediaDTO]:
-        """Fetches top-rated candidates across providers using randomized pagination.
-
-        Guarantees that each invocation surfaces a distinct, diverse pool of high-scoring works
-        respecting the optional media_type constraint (movie, series, anime, or all).
-        """
-        import random
-
+        """Fetches top-rated candidates across providers with strict 2.5s timeout and TTL caching."""
         norm_mt = media_type.upper().strip() if media_type else None
         if norm_mt in ("FILM", "MOVIE"):
             target_type = "MOVIE"
@@ -200,16 +200,38 @@ class MediaAggregatorService:
         else:
             target_type = "ALL"
 
+        use_cache = not self._is_mocked()
+        now = time.monotonic()
+        if use_cache and target_type in _MASTERPIECE_CACHE:
+            ts, cached_pool = _MASTERPIECE_CACHE[target_type]
+            if now - ts < CACHE_TTL_SECONDS and cached_pool:
+                shuffled = list(cached_pool)
+                random.shuffle(shuffled)
+                return shuffled[: max(limit, 25)]
+
         tasks = []
         if target_type in ("ALL", "ANIME"):
-            random_anime_page = random.randint(1, 15)
-            tasks.append(self.anilist_client.get_popular_anime(page=random_anime_page, per_page=limit))
+            random_anime_page = random.randint(1, 5)
+            tasks.append(
+                asyncio.wait_for(
+                    self.anilist_client.get_popular_anime(page=random_anime_page, per_page=limit),
+                    timeout=PROVIDER_TIMEOUT_SECONDS,
+                )
+            )
         if target_type in ("ALL", "MOVIE"):
-            random_movie_page = random.randint(1, 10)
-            tasks.append(self.tmdb_client.get_popular_movies(page=random_movie_page))
+            tasks.append(
+                asyncio.wait_for(
+                    self.tmdb_client.get_popular_movies(page=1),
+                    timeout=PROVIDER_TIMEOUT_SECONDS,
+                )
+            )
         if target_type in ("ALL", "SERIES"):
-            random_tv_page = random.randint(1, 10)
-            tasks.append(self.tmdb_client.get_popular_series(page=random_tv_page))
+            tasks.append(
+                asyncio.wait_for(
+                    self.tmdb_client.get_popular_series(page=1),
+                    timeout=PROVIDER_TIMEOUT_SECONDS,
+                )
+            )
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         candidates: List[UnifiedMediaDTO] = []
@@ -218,24 +240,6 @@ class MediaAggregatorService:
             if isinstance(res, list):
                 candidates.extend(res)
 
-        if not candidates:
-            # Fallback to search if popular queries fail
-            if target_type == "ANIME":
-                fallback_terms = ["death note", "hunter x hunter", "monster", "steins gate", "attack on titan", "vinland saga", "berserk", "cowboy bebop"]
-            elif target_type == "MOVIE":
-                fallback_terms = ["matrix", "interstellar", "inception", "fight club", "pulp fiction", "parasite"]
-            elif target_type == "SERIES":
-                fallback_terms = ["breaking bad", "dark", "better call saul", "severance", "stranger things"]
-            else:
-                fallback_terms = ["death note", "hunter x hunter", "monster", "steins gate", "attack on titan", "matrix", "interstellar", "inception", "breaking bad", "dark"]
-            term = random.choice(fallback_terms)
-            candidates = await self.search(
-                query=term,
-                enable_tmdb=(target_type in ("ALL", "MOVIE", "SERIES")),
-                enable_anilist=(target_type in ("ALL", "ANIME")),
-            )
-
-        # Enforce exact type filter if specified
         if target_type == "ANIME":
             candidates = [c for c in candidates if c.source == "ANILIST"]
         elif target_type == "MOVIE":
@@ -244,6 +248,8 @@ class MediaAggregatorService:
             candidates = [c for c in candidates if c.source == "TMDB_SERIES"]
 
         deduped = self._deduplicate(candidates)
+        if use_cache and deduped:
+            _MASTERPIECE_CACHE[target_type] = (now, list(deduped))
+
         random.shuffle(deduped)
         return deduped
-

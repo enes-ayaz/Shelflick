@@ -42,6 +42,16 @@ class UserMediaBase(BaseModel):
         None,
         description="Personal review or notes",
     )
+    watched_episodes: int = Field(
+        default=0,
+        ge=0,
+        description="Number of episodes watched",
+    )
+    watched_seasons: int = Field(
+        default=0,
+        ge=0,
+        description="Number of seasons watched",
+    )
 
 
 class UserMediaCreate(UserMediaBase):
@@ -56,6 +66,8 @@ class UserMediaUpdate(BaseModel):
     user_score: Optional[float] = Field(None, ge=1.0, le=10.0)
     drop_reason: Optional[str] = Field(None, max_length=255)
     personal_notes: Optional[str] = None
+    watched_episodes: Optional[int] = Field(default=None, ge=0)
+    watched_seasons: Optional[int] = Field(default=None, ge=0)
 
 
 class UserMediaResponse(UserMediaBase):

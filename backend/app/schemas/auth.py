@@ -8,13 +8,13 @@ class UserRegisterRequest(BaseModel):
     """Payload for registering with email and password."""
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., min_length=6, max_length=128, description="User password (min 6 chars)")
-    name: Optional[str] = Field(default=None, description="Display name / Full name")
+    name: Optional[str] = Field(default=None, max_length=255, description="Display name / Full name")
 
 
 class UserLoginRequest(BaseModel):
     """Payload for logging in with email and password."""
     email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., description="User password")
+    password: str = Field(..., min_length=1, max_length=128, description="User password")
 
 
 class GoogleAuthRequest(BaseModel):

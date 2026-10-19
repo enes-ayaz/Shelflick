@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -90,6 +91,20 @@ class UserMedia(Base):
         Text,
         nullable=True,
         doc="Private user notes, comments or review",
+    )
+    watched_episodes: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Total episodes watched by the user",
+    )
+    watched_seasons: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Total seasons watched by the user",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

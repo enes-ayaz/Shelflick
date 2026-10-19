@@ -12,6 +12,11 @@ export interface UnifiedMediaDTO {
   themes: string[];
   base_score: number;
   vote_count: number;
+  runtime?: number | null;
+  total_episodes?: number | null;
+  total_seasons?: number | null;
+  airing_status?: string | null;
+  next_airing_info?: any;
   runtime_minutes?: number;
 }
 
@@ -41,6 +46,8 @@ export interface LiveSearchResultItem {
   base_score?: number | null;
   synopsis?: string | null;
   genres?: string[];
+  runtime?: number | null;
+  total_episodes?: number | null;
 }
 
 export interface RecommendationResponse {
@@ -72,6 +79,7 @@ export interface LibraryItemDTO {
   original_title?: string | null;
   release_year?: number | null;
   poster_url: string;
+  synopsis?: string | null;
   genres: string[];
   themes: string[];
   base_score: number;
@@ -80,6 +88,13 @@ export interface LibraryItemDTO {
   user_score?: number | null;
   personal_notes?: string | null;
   drop_reason?: string | null;
+  runtime?: number | null;
+  total_episodes?: number | null;
+  total_seasons?: number | null;
+  airing_status?: string | null;
+  next_airing_info?: any;
+  watched_episodes?: number;
+  watched_seasons?: number;
 }
 
 export interface AddToLibraryPayload {
@@ -90,6 +105,19 @@ export interface AddToLibraryPayload {
   user_score?: number;
   personal_notes?: string;
   drop_reason?: string;
+  watched_episodes?: number;
+  watched_seasons?: number;
+}
+
+export interface LibraryStats {
+  total_watch_time_minutes: number;
+  total_watch_time_formatted: {
+    days: number;
+    hours: number;
+    minutes: number;
+  };
+  total_episodes_watched: number;
+  radar_items: LibraryItemDTO[];
 }
 
 export interface UserDTO {

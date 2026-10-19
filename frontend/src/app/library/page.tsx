@@ -6,13 +6,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, ArrowLeft, Star, Film, CheckCircle2, Clock, AlertCircle, Info, LogIn, LogOut } from "lucide-react";
 import { BackgroundWall } from "@/components/BackgroundWall";
 import { ShelfView } from "@/components/shelf/ShelfView";
-import { fetchLibraryItems, DEMO_USER_ID } from "@/services/api";
+import { fetchLibraryItems, getLibraryStats, DEMO_USER_ID } from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
-import { LibraryItemDTO } from "@/types";
+import { LibraryItemDTO, LibraryStats } from "@/types";
 
 export default function LibraryPage() {
   const { user, openAuthModal, logout } = useAuth();
   const [items, setItems] = useState<LibraryItemDTO[]>([]);
+  const [stats, setStats] = useState<LibraryStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "info" | "error" } | null>(null);
 
@@ -21,12 +22,25 @@ export default function LibraryPage() {
     setTimeout(() => setToast(null), 4000);
   };
 
+  const refreshStats = async () => {
+    try {
+      const s = await getLibraryStats(user?.id);
+      setStats(s);
+    } catch (e) {
+      console.warn("Failed to update stats:", e);
+    }
+  };
+
   useEffect(() => {
     async function loadShelf() {
       setIsLoading(true);
       try {
-        const data = await fetchLibraryItems(user?.id);
+        const [data, statsData] = await Promise.all([
+          fetchLibraryItems(user?.id),
+          getLibraryStats(user?.id),
+        ]);
         setItems(data);
+        setStats(statsData);
       } catch (err) {
         console.error("Error loading library items:", err);
         showToast("Raf verileri yüklenirken bir sorun oluştu.", "error");
@@ -41,11 +55,13 @@ export default function LibraryPage() {
     setItems((prev) =>
       prev.map((i) => (i.id === updatedItem.id ? updatedItem : i))
     );
+    refreshStats();
     showToast(`"${updatedItem.title}" güncellendi! ✨`);
   };
 
   const handleItemDeleted = (itemId: string) => {
     setItems((prev) => prev.filter((i) => i.id !== itemId));
+    refreshStats();
     showToast("Yapım rafından kaldırıldı.");
   };
 
@@ -162,6 +178,25 @@ export default function LibraryPage() {
 
           {/* Quick Stats Badges */}
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Watch Time Summary Counter Badge */}
+            {stats && stats.total_watch_time_minutes > 0 && (
+              <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-amber-500/15 via-yellow-500/10 to-amber-600/15 border border-amber-400/40 text-amber-200 shadow-[0_0_15px_rgba(245,158,11,0.15)] backdrop-blur-md">
+                <Clock className="w-4 h-4 text-amber-300 animate-pulse flex-shrink-0" />
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <span className="text-neutral-400 font-normal hidden sm:inline">Toplam Ekran Süresi:</span>
+                  <span className="font-extrabold text-white font-mono">
+                    {stats.total_watch_time_formatted.days > 0 && `${stats.total_watch_time_formatted.days} Gün `}
+                    {`${stats.total_watch_time_formatted.hours} Saat`}
+                    {stats.total_watch_time_formatted.days === 0 && ` ${stats.total_watch_time_formatted.minutes} Dk`}
+                  </span>
+                  <span className="text-amber-400/60">•</span>
+                  <span className="text-amber-300 font-bold">
+                    {stats.total_episodes_watched} Bölüm
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-white/[0.04] border border-white/10 text-xs font-medium">
               <Film className="w-4 h-4 text-indigo-400" />
               <span className="text-neutral-400">Toplam:</span>

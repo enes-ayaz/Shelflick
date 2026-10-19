@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -197,6 +198,15 @@ export const ShelfDrawer: React.FC<ShelfDrawerProps> = ({
                               {item.release_year}
                             </span>
                           )}
+                          {item.source !== "TMDB_MOVIE" && (item.watched_episodes !== undefined || item.total_episodes) ? (
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[10px] font-mono">
+                              {item.watched_episodes || 0}/{item.total_episodes || "?"} Böl.
+                            </span>
+                          ) : item.runtime ? (
+                            <span className="text-[10px] text-neutral-400">
+                              {item.runtime} dk
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 
@@ -215,8 +225,17 @@ export const ShelfDrawer: React.FC<ShelfDrawerProps> = ({
             </div>
 
             {/* Footer */}
-            <div className="p-4 border-t border-white/5 bg-black/40 text-center">
-              <p className="text-[11px] text-neutral-400">
+            <div className="p-4 border-t border-white/5 bg-black/40 flex flex-col gap-2 text-center">
+              <Link
+                href="/library"
+                onClick={onClose}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-glow flex items-center justify-center gap-2"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>3D Dikey Rafımı Aç ({items.length} Kutu)</span>
+                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+              </Link>
+              <p className="text-[10px] text-neutral-400">
                 Kaydedilen yapımlar "Şansıma Güveniyorum" havuzundan otomatik filtrelenir.
               </p>
             </div>

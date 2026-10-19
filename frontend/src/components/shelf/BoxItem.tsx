@@ -94,12 +94,12 @@ export const BoxItem: React.FC<BoxItemProps> = ({ item, onClick }) => {
 
   const handleCardClick = (e: React.MouseEvent) => {
     if (isMobile) {
-      // On mobile (<768px): Tap toggles expansion between 85px and 280px
+      // On mobile (<768px): First tap expands the box, tap on expanded box opens detail modal
       if (!isExpandedMobile) {
         setIsExpandedMobile(true);
         playHover();
       } else {
-        setIsExpandedMobile(false);
+        onClick(item);
       }
     } else {
       // On desktop: click directly opens detail modal
@@ -272,11 +272,45 @@ export const BoxItem: React.FC<BoxItemProps> = ({ item, onClick }) => {
                     <span className="text-[11px] text-neutral-400">{item.release_year}</span>
                   </>
                 )}
+                {item.source === "TMDB_MOVIE" && item.runtime && (
+                  <>
+                    <span className="text-neutral-500">•</span>
+                    <span className="text-[11px] text-neutral-400">{item.runtime} dk</span>
+                  </>
+                )}
               </div>
 
               <h4 className="text-sm font-bold text-white line-clamp-2 leading-snug drop-shadow-md">
                 {item.title}
               </h4>
+
+              {/* Episode Progress Bar for Episodic Items */}
+              {item.source !== "TMDB_MOVIE" && item.status === "WATCHING" && (
+                <div className="mt-0.5 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[10px] text-blue-300 font-medium">
+                    <span className="flex items-center gap-1 font-mono">
+                      📺 {item.watched_episodes || 0} / {item.total_episodes || "?"} Böl.
+                    </span>
+                    {item.total_episodes && item.total_episodes > 0 && (
+                      <span className="text-[9px] text-neutral-400 font-mono">
+                        %{Math.round(((item.watched_episodes || 0) / item.total_episodes) * 100)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-full h-1 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full"
+                      style={{
+                        width: `${
+                          item.total_episodes && item.total_episodes > 0
+                            ? Math.min(100, Math.max(0, ((item.watched_episodes || 0) / item.total_episodes) * 100))
+                            : 35
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Genres Pills */}
               {item.genres && item.genres.length > 0 && (
