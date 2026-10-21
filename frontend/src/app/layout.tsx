@@ -5,6 +5,14 @@ import { Providers } from "./providers";
 export const metadata: Metadata = {
   title: "Shelflick — Kişisel Medya & Akıllı Keşif Asistanı",
   description: "Yapay zeka destekli, kişisel zevkine ve ruh haline göre film, dizi ve anime keşif motoru.",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

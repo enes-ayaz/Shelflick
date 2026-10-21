@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { LibraryItemDTO, WatchStatus } from "@/types";
 import { formatPosterUrl } from "@/services/api";
+import { BrandLogo } from "./BrandLogo";
 
 
 interface ShelfDrawerProps {
@@ -90,9 +91,7 @@ export const ShelfDrawer: React.FC<ShelfDrawerProps> = ({
             {/* Header */}
             <div className="px-6 py-5 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-                  <BookOpen className="w-4 h-4" />
-                </div>
+                <BrandLogo />
                 <div>
                   <h3 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
                     Kişisel Rafım

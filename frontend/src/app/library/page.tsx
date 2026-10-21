@@ -5,6 +5,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, ArrowLeft, Star, Film, CheckCircle2, Clock, AlertCircle, Info, LogIn, LogOut } from "lucide-react";
 import { BackgroundWall } from "@/components/BackgroundWall";
+import { BrandLogo } from "@/components/BrandLogo";
 import { ShelfView } from "@/components/shelf/ShelfView";
 import { fetchLibraryItems, getLibraryStats, DEMO_USER_ID } from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
@@ -81,9 +82,7 @@ export default function LibraryPage() {
           href="/"
           className="flex items-center gap-2.5 group cursor-pointer focus:outline-none"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-500 flex items-center justify-center font-black tracking-tighter text-white text-base shadow-glow group-hover:scale-105 transition-transform duration-300">
-            <span className="font-mono tracking-tighter text-sm font-black">||&gt;</span>
-          </div>
+          <BrandLogo />
           <div className="flex flex-col text-left">
             <span className="text-lg font-bold tracking-tight text-white group-hover:text-indigo-400 transition-colors">
               Shelflick

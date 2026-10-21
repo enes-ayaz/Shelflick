@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { BookOpen, LogIn, LogOut, Radar, Sparkles, Clock, Calendar, ChevronRight, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FloatingBadge } from "./FloatingBadge";
+import { BrandLogo } from "./BrandLogo";
 import { useAuth } from "@/context/AuthContext";
 import { getLibraryStats, formatPosterUrl } from "@/services/api";
 import { LibraryItemDTO } from "@/types";
@@ -129,9 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
         className="flex items-center gap-2.5 group cursor-pointer focus:outline-none"
         title="Ana Sayfaya Dön / Aramayı Sıfırla"
       >
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-500 flex items-center justify-center font-black tracking-tighter text-white text-base shadow-glow group-hover:scale-105 transition-transform duration-300">
-          <span className="font-mono tracking-tighter text-sm font-black">||&gt;</span>
-        </div>
+        <BrandLogo />
         <div className="flex flex-col text-left">
           <span className="text-lg font-bold tracking-tight text-white group-hover:text-indigo-400 transition-colors">
             Shelflick

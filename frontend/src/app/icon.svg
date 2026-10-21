@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="pillGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed" />
+      <stop offset="50%" stop-color="#6d28d9" />
+      <stop offset="100%" stop-color="#4c1d95" />
+    </linearGradient>
+    <radialGradient id="ambientGlow" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#d8b4fe" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#d8b4fe" stop-opacity="0" />
+    </radialGradient>
+    <filter id="whiteGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2.2" flood-color="#ffffff" flood-opacity="0.75" />
+    </filter>
+  </defs>
+
+  <!-- Modern Pill / Squircle Badge Container -->
+  <rect x="2" y="8" width="60" height="48" rx="24" fill="url(#pillGrad)" stroke="rgba(255,255,255,0.38)" stroke-width="2" />
+  <rect x="2" y="8" width="60" height="48" rx="24" fill="url(#ambientGlow)" />
+
+  <!-- || Book Pages + > Play Arrow -->
+  <g filter="url(#whiteGlow)">
+    <!-- Page Line 1 -->
+    <rect x="17" y="20" width="4.5" height="24" rx="2.25" fill="#ffffff" />
+    <!-- Page Line 2 -->
+    <rect x="25.5" y="20" width="4.5" height="24" rx="2.25" fill="#ffffff" />
+    <!-- Play Arrow > -->
+    <polygon points="36,22 36,42 50,32" fill="#ffffff" />
+  </g>
+</svg>
