@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, ArrowLeft, Star, Film, CheckCircle2, Clock, AlertCircle, Info, LogIn, LogOut } from "lucide-react";
+import { Sparkles, ArrowLeft, Star, Film, CheckCircle2, Clock, AlertCircle, Info, LogIn, LogOut, X, ChevronRight } from "lucide-react";
 import { BackgroundWall } from "@/components/BackgroundWall";
 import { BrandLogo } from "@/components/BrandLogo";
 import { ShelfView } from "@/components/shelf/ShelfView";
@@ -16,7 +16,17 @@ export default function LibraryPage() {
   const [items, setItems] = useState<LibraryItemDTO[]>([]);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "info" | "error" } | null>(null);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isMobileMenuOpen]);
 
   const showToast = (message: string, type: "info" | "error" = "info") => {
     setToast({ message, type });
@@ -77,9 +87,10 @@ export default function LibraryPage() {
       <BackgroundWall />
 
       {/* Top Navbar */}
-      <header className="fixed top-0 left-0 right-0 z-40 px-4 md:px-8 py-4 flex items-center justify-between pointer-events-auto backdrop-blur-md bg-[#0a0a0c]/70 border-b border-white/[0.04]">
+      <header className="fixed top-0 left-0 right-0 z-40 px-4 md:px-8 py-3.5 md:py-4 flex items-center justify-between pointer-events-auto backdrop-blur-md bg-[#0a0a0c]/70 border-b border-white/[0.04]">
         <Link
           href="/"
+          onClick={() => setIsMobileMenuOpen(false)}
           className="flex items-center gap-2.5 group cursor-pointer focus:outline-none"
         >
           <BrandLogo />
@@ -93,7 +104,47 @@ export default function LibraryPage() {
           </div>
         </Link>
 
-        <div className="flex items-center gap-3">
+        {/* Mobile Only: Animated 3-Line Hamburger Trigger */}
+        <button
+          type="button"
+          onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+          aria-label={isMobileMenuOpen ? "Menüyü Kapat" : "Menüyü Aç"}
+          aria-expanded={isMobileMenuOpen}
+          className="relative flex md:hidden items-center justify-center w-10 h-10 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 active:scale-95 transition-all cursor-pointer"
+        >
+          <div className="w-5 h-4 flex flex-col justify-between items-center relative">
+            <motion.span
+              animate={
+                isMobileMenuOpen
+                  ? { rotate: 45, y: 7, backgroundColor: "#a78bfa" }
+                  : { rotate: 0, y: 0, backgroundColor: "#f5f5f5" }
+              }
+              transition={{ type: "spring", stiffness: 360, damping: 26 }}
+              className="w-5 h-[2px] rounded-full block origin-center"
+            />
+            <motion.span
+              animate={
+                isMobileMenuOpen
+                  ? { opacity: 0, x: 10, scaleX: 0.4 }
+                  : { opacity: 1, x: 0, scaleX: 1 }
+              }
+              transition={{ duration: 0.2 }}
+              className="w-3.5 h-[2px] bg-indigo-400 rounded-full block self-end"
+            />
+            <motion.span
+              animate={
+                isMobileMenuOpen
+                  ? { rotate: -45, y: -7, backgroundColor: "#a78bfa" }
+                  : { rotate: 0, y: 0, backgroundColor: "#f5f5f5" }
+              }
+              transition={{ type: "spring", stiffness: 360, damping: 26 }}
+              className="w-5 h-[2px] rounded-full block origin-center"
+            />
+          </div>
+        </button>
+
+        {/* Desktop Only Actions */}
+        <div className="hidden md:flex items-center gap-3">
           <Link
             href="/"
             className="flex items-center gap-2 px-3.5 py-1.5 md:px-4 md:py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 hover:border-indigo-500/40 text-neutral-200 hover:text-white transition-all text-xs md:text-sm font-medium shadow-sm group"
@@ -134,6 +185,164 @@ export default function LibraryPage() {
           )}
         </div>
       </header>
+
+      {/* Mobile Drawer (Only visible on < md) */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black/75 backdrop-blur-md"
+            />
+
+            <motion.aside
+              initial={{ x: "100%", opacity: 0.6 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: "100%", opacity: 0.6 }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="fixed top-0 right-0 bottom-0 w-[85%] max-w-[340px] bg-[#0b0b10]/95 border-l border-white/10 backdrop-blur-2xl shadow-[0_0_50px_rgba(0,0,0,0.9)] flex flex-col justify-between overflow-hidden z-10"
+            >
+              <div className="pointer-events-none absolute -top-20 -right-20 w-56 h-56 rounded-full bg-indigo-600/20 blur-3xl" />
+              <div className="pointer-events-none absolute bottom-10 -left-20 w-48 h-48 rounded-full bg-purple-600/15 blur-3xl" />
+
+              {/* Drawer Header */}
+              <div className="relative z-10 px-5 py-4 border-b border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <BrandLogo />
+                  <div className="flex flex-col">
+                    <span className="text-base font-bold text-white tracking-tight">
+                      Shelflick
+                    </span>
+                    <span className="text-[9px] text-indigo-300/80 font-semibold uppercase tracking-widest -mt-0.5">
+                      Kişisel Raf Menüsü
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  aria-label="Menüyü Kapat"
+                  className="p-2 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-neutral-400 hover:text-white transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Drawer Body */}
+              <motion.div
+                initial="hidden"
+                animate="visible"
+                variants={{
+                  hidden: { opacity: 0 },
+                  visible: {
+                    opacity: 1,
+                    transition: { staggerChildren: 0.06, delayChildren: 0.05 },
+                  },
+                }}
+                className="relative z-10 flex-1 overflow-y-auto px-5 py-5 space-y-4 custom-scrollbar"
+              >
+                {/* User Auth Card */}
+                <motion.div
+                  variants={{
+                    hidden: { opacity: 0, y: 12 },
+                    visible: { opacity: 1, y: 0 },
+                  }}
+                >
+                  {user ? (
+                    <div className="p-3.5 rounded-2xl bg-gradient-to-br from-white/[0.06] to-white/[0.02] border border-white/10 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center text-white text-sm font-black shadow-md flex-shrink-0">
+                          {user.name ? user.name.trim().charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-white truncate">
+                            {user.name || user.email.split("@")[0]}
+                          </p>
+                          <p className="text-[11px] text-neutral-400 truncate">
+                            {user.email}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          logout();
+                        }}
+                        title="Çıkış Yap"
+                        className="p-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 text-red-400 transition-colors flex-shrink-0"
+                      >
+                        <LogOut className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 via-indigo-500/5 to-transparent border border-amber-500/25 space-y-3">
+                      <div className="flex items-center gap-2 text-amber-300 text-xs font-semibold">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Kişisel Rafını Senkronize Et</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 leading-relaxed">
+                        İzleme listeni her cihazdan yönetmek için giriş yap.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          openAuthModal();
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-bold text-xs shadow-lg shadow-amber-500/15 active:scale-[0.98] transition-all"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span>Giriş Yap / Kayıt Ol</span>
+                      </button>
+                    </div>
+                  )}
+                </motion.div>
+
+                {/* Back to Discovery Navigation Card */}
+                <motion.div
+                  variants={{
+                    hidden: { opacity: 0, y: 12 },
+                    visible: { opacity: 1, y: 0 },
+                  }}
+                >
+                  <Link
+                    href="/"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="flex items-center justify-between p-4 rounded-2xl bg-gradient-to-r from-indigo-600/20 via-purple-600/15 to-indigo-600/10 hover:from-indigo-600/30 hover:to-purple-600/25 border border-indigo-500/30 text-white transition-all group shadow-lg shadow-indigo-950/30"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-500/25 border border-indigo-400/30 flex items-center justify-center text-indigo-300 group-hover:-translate-x-0.5 transition-transform">
+                        <ArrowLeft className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-white">
+                          <span>Keşfe Dön</span>
+                        </div>
+                        <p className="text-[11px] text-indigo-200/70">
+                          Yapay Zeka Öneri Motoru
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-indigo-300" />
+                  </Link>
+                </motion.div>
+              </motion.div>
+
+              {/* Drawer Footer */}
+              <div className="relative z-10 px-5 py-3.5 border-t border-white/10 bg-black/40 text-center">
+                <p className="text-[10px] text-neutral-500 font-medium">
+                  Shelflick &bull; Kişisel Medya Koleksiyonu
+                </p>
+              </div>
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Floating Toast Notification */}
       <AnimatePresence>
